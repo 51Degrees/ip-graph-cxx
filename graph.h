@@ -104,8 +104,10 @@ typedef struct fiftyone_degrees_ipi_cg_info_t {
 				  the data file. The value can still be cast to the enum type
 				  fiftyoneDegreesIpEvidenceType */
 	byte componentId; /**< The component id the graph relates to. */
-	uint32_t recordSize; /**< The number of bytes per fixed width node. Never
-						 more than 8 bytes. */
+	byte recordSize; /**< The number of bytes per fixed width node. Never more
+					 than 64 bytes. */
+	uint64_t graphIndex; /**< The index to the entry record in the header data 
+						 structure for the graph. */
 	fiftyoneDegreesIpiCgMember zeroFlag; /**< Single bit to indicate if the node
 									     is zero leaf */
 	fiftyoneDegreesIpiCgMember zeroSkip; /**< Bits used to obtain the zero skip */
@@ -137,7 +139,7 @@ FIFTYONE_DEGREES_ARRAY_TYPE(fiftyoneDegreesIpiCg,)
  * fiftyoneDegreesIpiGraphCreateFromMemory.
  * @param graphs pointer to the array to be freed
  */
-EXTERNAL void fiftyoneDegreesIpiGraphFree(fiftyoneDegreesIpiCgArray* graphs);
+void fiftyoneDegreesIpiGraphFree(fiftyoneDegreesIpiCgArray* graphs);
 
 /**
  * Creates and initializes an array of graphs for the collection where the
