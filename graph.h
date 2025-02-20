@@ -104,8 +104,8 @@ typedef struct fiftyone_degrees_ipi_cg_info_t {
 				  the data file. The value can still be cast to the enum type
 				  fiftyoneDegreesIpEvidenceType */
 	byte componentId; /**< The component id the graph relates to. */
-	byte recordSize; /**< The number of bytes per fixed width node. Never more
-					 than 64 bytes. */
+	byte recordSize; /**< The number of bits per fixed width node. Never more
+					 than 64 bits. */
 	uint64_t graphIndex; /**< The index to the entry record in the header data 
 						 structure for the graph. */
 	fiftyoneDegreesIpiCgMember zeroFlag; /**< Single bit to indicate if the node

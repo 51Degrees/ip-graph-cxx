@@ -346,14 +346,14 @@ static IpiCgArray* ipiGraphCreate(
 	IpiCgArray* graphs;
 
 	// Create the array for each of the graphs.
-	uint32_t size = CollectionGetCount(collection);
-	FIFTYONE_DEGREES_ARRAY_CREATE(IpiCg, graphs, size); 
+	uint32_t count = CollectionGetCount(collection);
+	FIFTYONE_DEGREES_ARRAY_CREATE(IpiCg, graphs, count); 
 	if (graphs == NULL) {
 		EXCEPTION_SET(INSUFFICIENT_MEMORY);
 		return NULL;
 	}
 
-	for (uint32_t i = 0; i < size; i++) {
+	for (uint32_t i = 0; i < count; i++) {
 		graphs->items[i].collection = NULL;
 
 		// Get the information from the collection provided.
@@ -374,8 +374,7 @@ static IpiCgArray* ipiGraphCreate(
 			graphs->items[i].info->header, 
 			state);
 		if (graphs->items[i].collection == NULL) {
-			// TODO check status code.
-			EXCEPTION_SET(INSUFFICIENT_MEMORY);
+			EXCEPTION_SET(CORRUPT_DATA);
 			fiftyoneDegreesIpiGraphFree(graphs);
 			return NULL;
 		}
