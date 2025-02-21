@@ -332,10 +332,21 @@ static Collection* ipiGraphCreateFromFile(
 		CollectionReadFileFixed);
 }
 
+// Graph headers might be duplicated across different graphs. As such the 
+// reader passed may not be at the first byte of the graph being created. The
+// current reader position is therefore modified to that of the header and then
+// reset after the operation.
 static Collection* ipiGraphCreateFromMemory(
 	CollectionHeader header, 
 	void* state) {
-	return CollectionCreateFromMemory((MemoryReader*)state, header);
+	MemoryReader* reader = (MemoryReader*)state;
+	byte* current = reader->current;
+	reader->current = reader->startByte + header.startPosition;
+	Collection* collection = CollectionCreateFromMemory(
+		(MemoryReader*)state,
+		header);
+	reader->current = current;
+	return collection;
 }
 
 static IpiCgArray* ipiGraphCreate(
@@ -370,8 +381,12 @@ static IpiCgArray* ipiGraphCreate(
 		graphs->count++;
 
 		// Create a collection for the graph.
+		CollectionHeader header;
+		header.count = 0;
+		header.length = (uint32_t)graphs->items[i].info->graphLength;
+		header.startPosition = (uint32_t)graphs->items[i].info->graphStartPosition;
 		graphs->items[i].collection = collectionCreate(
-			graphs->items[i].info->header, 
+			header,
 			state);
 		if (graphs->items[i].collection == NULL) {
 			EXCEPTION_SET(CORRUPT_DATA);
