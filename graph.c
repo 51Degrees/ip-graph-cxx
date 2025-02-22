@@ -65,10 +65,11 @@ typedef Collection*(*collectionCreate)(CollectionHeader header, void* state);
 typedef struct cursor_t {
 	IpiCg* const graph; // Graph the cursor is working with
 	IpAddress const ip; // The IP address source
-	byte bitIndex; // Bit index from high to low in the IP address value array
+	byte bitIndex; // Current bit index from high to low in the IP address 
+				   // value array
 	Exception* ex; // Current exception instance
 	uint64_t current; // The value of the current item in the graph
-	uint32_t index; // The current index in the collection
+	uint64_t recordIndex; // The current index in the graph collection
 	byte skip; // The number of bits left to be skipped
 	Item item; // Data for the current item in the graph
 } Cursor;
@@ -90,7 +91,74 @@ static bool isBitSet(Cursor* cursor) {
 	return (cursor->ip.value[byteIndex] & masks[bitIndex]) != 0;
 }
 
-// Creates a cursor ready for evaluation with the graph and IP address.
+/*
+ * Function: extract_u64
+ * ---------------------
+ *  Extracts an unsigned 64-bit integer from a byte array,
+ *  starting from a specified bit index (0-7) in the first byte.
+ *
+ *  Parameters:
+ *    buf: Pointer to an array of bytes containing the bit stream.
+ *    bit_index: Bit offset (0-7) within the first byte where the 64-bit integer starts.
+ *
+ *  Returns:
+ *    The extracted unsigned 64-bit integer.
+ *
+ * Note:
+ * The bits are stored in big-endian bit order (i.e. the most significant 
+ * bit is encountered first in each byte).
+ */
+uint64_t extractValue(const byte* buf, unsigned bitIndex) {
+	uint64_t result = 0;
+	// Total bits to extract is 64.
+	for (unsigned i = 0; i < 64; i++) {
+		// Overall bit position in the buffer.
+		unsigned overall_bit_index = bitIndex + i;
+		// Locate the corresponding byte.
+		uint8_t byte = buf[overall_bit_index / 8];
+		// Compute bit position in the byte (MSB first).
+		unsigned bit_pos_in_byte = 7 - (overall_bit_index % 8);
+		// Extract the bit (0 or 1).
+		uint8_t bit = (byte >> bit_pos_in_byte) & 1;
+		// Shift the result left and add the bit.
+		result = (result << 1) | bit;
+	}
+	return result;
+}
+
+// Moves the cursor to the index in the collection returning the value of the
+// record. Uses CgInfo.recordSize to convert the byte array of the record into
+// a 64 bit positive integer.
+static uint64_t cursorMove(Cursor* cursor, uint64_t recordIndex) {
+
+	// Work out the byte index for the record index and the starting bit index
+	// within that byte.
+	uint64_t startBitIndex = (recordIndex * cursor->graph->info->recordSize);
+	uint64_t byteIndex = startBitIndex / 8;
+	byte highBitIndex = startBitIndex % 8;
+
+	// Get a pointer to that byte from the collection.
+	// TODO change to 64 bit variant.
+	byte* ptr = (byte*)cursor->graph->collection->get(
+		cursor->graph->collection,
+		(uint32_t)byteIndex,
+		&cursor->item,
+		cursor->ex);
+
+	// Set the record index.
+	cursor->recordIndex = recordIndex;
+
+	// Move the bits in the bytes pointed to create the requirement unsigned
+	// long.
+	cursor->current = extractValue(ptr, highBitIndex);
+
+	// Release the data and then return the current cursor value.
+	cursor->item.collection->release(&cursor->item);
+	return cursor->current;
+}
+
+// Creates a cursor ready for evaluation with the graph and IP address. The
+// cursor is moved to the first record index of the graph.
 static Cursor cursorCreate(IpiCg* graph, IpAddress ip, Exception* exception) {
 	Cursor cursor = {
 		graph,
@@ -102,26 +170,8 @@ static Cursor cursorCreate(IpiCg* graph, IpAddress ip, Exception* exception) {
 		0
 	};
 	DataReset(&cursor.item.data);
+	cursorMove(&cursor, graph->info->graphIndex);
 	return cursor;
-}
-
-// Moves the cursor to the index in the collection returning the value of the
-// record. Uses CgInfo.recordSize to convert the byte array of the record into
-// a 64 bit positive integer.
-static uint64_t cursorMove(Cursor* cursor, uint32_t index) {
-	byte* ptr = (byte*)cursor->graph->collection->get(
-		cursor->graph->collection,
-		index,
-		&cursor->item,
-		cursor->ex);
-	cursor->index = index;
-	cursor->current = 0;
-	for (uint32_t i = 0; i < cursor->graph->info->recordSize; i++) {
-		cursor->current |= ptr[i] <<
-			((i - cursor->graph->info->recordSize) * 8);
-	}
-	cursor->item.collection->release(&cursor->item);
-	return cursor->current;
 }
 
 // The IpType for the component graph.
@@ -179,9 +229,9 @@ static bool isOneLeaf(Cursor* cursor) {
 static bool isNextOneLeaf(Cursor* cursor) {
 	bool result = false;
 	uint64_t current = cursor->current;
-	cursorMove(cursor, cursor->index + 1);
+	cursorMove(cursor, cursor->recordIndex + 1);
 	result = isOneLeaf(cursor);
-	cursor->index--;
+	cursor->recordIndex--;
 	cursor->current = current;
 	return result;
 }
@@ -198,9 +248,9 @@ static byte getOneSkip(Cursor* cursor) {
 static byte getNextOneSkip(Cursor* cursor) {
 	byte result;
 	uint64_t current = cursor->current;
-	cursorMove(cursor, cursor->index + 1);
+	cursorMove(cursor, cursor->recordIndex + 1);
 	result = getOneSkip(cursor);
-	cursor->index--;
+	cursor->recordIndex--;
 	cursor->current = current;
 	return result;
 }
@@ -240,7 +290,7 @@ static bool selectZero(Cursor* cursor) {
 	// move to it.
 	cursor->skip--;
 	if (cursor->skip == 0) {
-		cursorMove(cursor, cursor->index + 1);
+		cursorMove(cursor, cursor->recordIndex + 1);
 	}
 
 	// Completed processing the selected zero bit. Return false as no profile
@@ -267,7 +317,7 @@ static bool selectOne(Cursor* cursor) {
 	// node might relate to the zero leaf. If this is the case then it's 
 	// actually the next node that might contain the one leaf.
 	if (isZeroLeaf(cursor) && isNextOneLeaf(cursor)) {
-		cursorMove(cursor, cursor->index + 1);
+		cursorMove(cursor, cursor->recordIndex + 1);
 		return true;
 	}
 
@@ -293,7 +343,7 @@ static bool selectOne(Cursor* cursor) {
 	if (cursor->skip == 0)
 	{
 		if (isZeroLeaf(cursor)) {
-			cursorMove(cursor, cursor->index + 1);
+			cursorMove(cursor, cursor->recordIndex + 1);
 		}
 		cursorMove(cursor, (uint32_t)getValue(cursor));
 	}
@@ -381,6 +431,7 @@ static IpiCgArray* ipiGraphCreate(
 		graphs->count++;
 
 		// Create a collection for the graph.
+		// TODO create collections that support 64 bit sizes.
 		CollectionHeader header;
 		header.count = 0;
 		header.length = (uint32_t)graphs->items[i].info->graphLength;
