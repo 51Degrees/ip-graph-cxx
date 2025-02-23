@@ -498,7 +498,7 @@ uint32_t fiftyoneDegreesIpiGraphEvaluate(
 	fiftyoneDegreesException* exception) {
 	uint32_t profileIndex = 0;
 	IpiCg* graph;
-	for (uint32_t i = 0; graphs->count; i++) {
+	for (uint32_t i = 0; i < graphs->count; i++) {
 		graph = &graphs->items[i];
 		if (address.type == graph->info->version &&
 			componentId == graph->info->componentId) {
