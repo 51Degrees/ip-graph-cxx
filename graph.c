@@ -114,10 +114,8 @@ uint64_t extractValue(
 	unsigned bitIndex) {
 	uint64_t result = 0;
 	byte byteIndex = 0;
+	uint8_t byte = buf[byteIndex];
 	for (unsigned i = 0; i < recordSize; i++) {
-		
-		// Locate the corresponding byte.
-		uint8_t byte = buf[byteIndex];
 
 		// Extract the bit (0 or 1).
 		uint8_t bit = (byte >> bitIndex) & 1;
@@ -126,12 +124,13 @@ uint64_t extractValue(
 		result = (result << 1) | bit;
 
 		// Reduce the bit index and adjust the byte index if 0.
-		if (bitIndex > 0) {
-			bitIndex--;
-		}
-		else {
+		if (bitIndex == 0) {
 			bitIndex = 7;
 			byteIndex++;
+			byte = buf[byteIndex];
+		}
+		else {
+			bitIndex--;
 		}
 	}
 	return result;
@@ -146,13 +145,7 @@ static uint64_t cursorMove(Cursor* cursor, uint64_t recordIndex) {
 	// within that byte.
 	uint64_t startBitIndex = (recordIndex * cursor->graph->info->recordSize);
 	uint64_t byteIndex = startBitIndex / 8;
-	byte highBitIndex = startBitIndex % 8;
-	if (highBitIndex == 0) {
-		highBitIndex = 7;
-	}
-	else {
-		highBitIndex--;
-	}
+	byte highBitIndex = 7 - (startBitIndex % 8);
 
 	// Get a pointer to that byte from the collection.
 	// TODO change to 64 bit variant.
@@ -177,8 +170,7 @@ static uint64_t cursorMove(Cursor* cursor, uint64_t recordIndex) {
 	return cursor->current;
 }
 
-// Creates a cursor ready for evaluation with the graph and IP address. The
-// cursor is moved to the first record index of the graph.
+// Creates a cursor ready for evaluation with the graph and IP address.
 static Cursor cursorCreate(IpiCg* graph, IpAddress ip, Exception* exception) {
 	Cursor cursor = {
 		graph,
@@ -190,7 +182,6 @@ static Cursor cursorCreate(IpiCg* graph, IpAddress ip, Exception* exception) {
 		0
 	};
 	DataReset(&cursor.item.data);
-	cursorMove(&cursor, graph->info->graphIndex);
 	return cursor;
 }
 
@@ -381,6 +372,16 @@ static bool selectOne(Cursor* cursor) {
 // profile index.
 static uint32_t evaluate(Cursor* cursor) {
 	bool found = false;
+	
+	// Move to the first entry in the graph depending on whether the initial
+	// bit is one or zero.
+	if (isBitSet(cursor)) {
+		cursorMove(cursor, cursor->graph->info->graphIndex);
+	}
+	else {
+		cursorMove(cursor, cursor->graph->info->graphIndex + 1);
+	}
+
 	do
 	{
 		if (isBitSet(cursor)) {
