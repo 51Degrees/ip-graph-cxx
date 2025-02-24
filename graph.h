@@ -97,6 +97,7 @@ typedef struct fiftyone_degrees_ipi_cg_member_t {
 #pragma pack(push, 1)
 typedef struct fiftyone_degrees_ipi_cg_info_t {
 	uint64_t graphLength; /**< Number of bytes that form the complete graph */
+	uint32_t graphCount; /**< Number of records in the graph array */
 	uint64_t graphStartPosition; /**< Position of the first byte of the graph */
 	byte version; /**< IP address version (4 or 6). The reason byte is used
 				  instead of fiftyoneDegreesIpEvidenceType, is that enum is not

@@ -108,20 +108,31 @@ static bool isBitSet(Cursor* cursor) {
  * The bits are stored in big-endian bit order (i.e. the most significant 
  * bit is encountered first in each byte).
  */
-uint64_t extractValue(const byte* buf, unsigned bitIndex) {
+uint64_t extractValue(
+	const byte recordSize,
+	const byte* buf, 
+	unsigned bitIndex) {
 	uint64_t result = 0;
-	// Total bits to extract is 64.
-	for (unsigned i = 0; i < 64; i++) {
-		// Overall bit position in the buffer.
-		unsigned overall_bit_index = bitIndex + i;
+	byte byteIndex = 0;
+	for (unsigned i = 0; i < recordSize; i++) {
+		
 		// Locate the corresponding byte.
-		uint8_t byte = buf[overall_bit_index / 8];
-		// Compute bit position in the byte (MSB first).
-		unsigned bit_pos_in_byte = 7 - (overall_bit_index % 8);
+		uint8_t byte = buf[byteIndex];
+
 		// Extract the bit (0 or 1).
-		uint8_t bit = (byte >> bit_pos_in_byte) & 1;
+		uint8_t bit = (byte >> bitIndex) & 1;
+
 		// Shift the result left and add the bit.
 		result = (result << 1) | bit;
+
+		// Reduce the bit index and adjust the byte index if 0.
+		if (bitIndex > 0) {
+			bitIndex--;
+		}
+		else {
+			bitIndex = 7;
+			byteIndex++;
+		}
 	}
 	return result;
 }
@@ -136,6 +147,12 @@ static uint64_t cursorMove(Cursor* cursor, uint64_t recordIndex) {
 	uint64_t startBitIndex = (recordIndex * cursor->graph->info->recordSize);
 	uint64_t byteIndex = startBitIndex / 8;
 	byte highBitIndex = startBitIndex % 8;
+	if (highBitIndex == 0) {
+		highBitIndex = 7;
+	}
+	else {
+		highBitIndex--;
+	}
 
 	// Get a pointer to that byte from the collection.
 	// TODO change to 64 bit variant.
@@ -150,7 +167,10 @@ static uint64_t cursorMove(Cursor* cursor, uint64_t recordIndex) {
 
 	// Move the bits in the bytes pointed to create the requirement unsigned
 	// long.
-	cursor->current = extractValue(ptr, highBitIndex);
+	cursor->current = extractValue(
+		cursor->graph->info->recordSize,
+		ptr, 
+		highBitIndex);
 
 	// Release the data and then return the current cursor value.
 	cursor->item.collection->release(&cursor->item);
@@ -189,18 +209,21 @@ static uint64_t getValue(Cursor* cursor) {
 	return getMemberValue(cursor->graph->info->value, cursor->current);
 }
 
+// True if the cursor is currently positioned on a leaf and therefore profile 
+// index.
+static bool getIsProfileIndex(Cursor* cursor) {
+	return getValue(cursor) >= cursor->graph->info->graphCount;
+}
+
 // The index of the profile associated with the value if this is a leaf value.
-// A return value must be positive to relate to a profile, if negative then the
-// value is not a leaf.
+// getIsProfileIndex must be called before getting the profile index.
 static uint32_t getProfileIndex(Cursor* cursor) {
-	return (uint32_t)(
-		getValue(cursor) - 
-		CollectionGetCount(cursor->graph->collection));
+	return (uint32_t)(getValue(cursor) - cursor->graph->info->graphCount);
 }
 
 // True if the cursor value is leaf, otherwise false.
 static bool isLeaf(Cursor* cursor) {
-	return getProfileIndex(cursor) >= 0;
+	return getIsProfileIndex(cursor);
 }
 
 // True if the cursor value has the zero flag set, otherwise false.
