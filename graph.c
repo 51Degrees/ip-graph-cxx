@@ -87,7 +87,7 @@ static IpType getIpTypeFromVersion(byte version) {
 // True if the bit at the current cursor->bitIndex is 1, otherwise 0.
 static bool isBitSet(Cursor* cursor) {
 	byte byteIndex = cursor->bitIndex / 8;
-	byte bitIndex = cursor->bitIndex % 8;
+	byte bitIndex = 7 - (cursor->bitIndex % 8);
 	return (cursor->ip.value[byteIndex] & masks[bitIndex]) != 0;
 }
 
@@ -175,7 +175,7 @@ static Cursor cursorCreate(IpiCg* graph, IpAddress ip, Exception* exception) {
 	Cursor cursor = {
 		graph,
 		ip,
-		graph->startBitIndex,
+		0,
 		exception,
 		0,
 		0,
@@ -269,17 +269,6 @@ static byte getNextOneSkip(Cursor* cursor) {
 	return result;
 }
 
-// Calculates the bit index in the IP address that evaluation should start at.
-static byte graphStartBitIndex(IpiCg* graph) {
-	switch (getIpTypeFromGraph(graph->info)) {
-	case IP_TYPE_IPV4:
-		return 31;
-	case IP_TYPE_IPV6:
-		return 127;
-	}
-	return 0;
-}
-
 /// <summary>
 /// Moves the cursor for a zero bit.
 /// </summary>
@@ -309,7 +298,7 @@ static bool selectZero(Cursor* cursor) {
 
 	// Completed processing the selected zero bit. Return false as no profile
 	// index is yet found.
-	cursor->bitIndex--;
+	cursor->bitIndex++;
 	return false;
 }
 
@@ -364,24 +353,15 @@ static bool selectOne(Cursor* cursor) {
 
 	// Completed processing the selected one bit. Return false as no profile
 	// index is yet found.
-	cursor->bitIndex--;
+	cursor->bitIndex++;
 	return false;
 }
 
-// Evaluates the cursor until a profile index is found and then returns the
-// profile index.
+// Evaluates the cursor until a leaf is found and then returns the profile
+// index.
 static uint32_t evaluate(Cursor* cursor) {
 	bool found = false;
-	
-	// Move to the first entry in the graph depending on whether the initial
-	// bit is one or zero.
-	if (isBitSet(cursor)) {
-		cursorMove(cursor, cursor->graph->info->graphIndex);
-	}
-	else {
-		cursorMove(cursor, cursor->graph->info->graphIndex + 1);
-	}
-
+	cursorMove(cursor, cursor->graph->info->graphIndex);
 	do
 	{
 		if (isBitSet(cursor)) {
@@ -468,10 +448,6 @@ static IpiCgArray* ipiGraphCreate(
 			fiftyoneDegreesIpiGraphFree(graphs);
 			return NULL;
 		}
-
-		// Finally set the start bit index to avoid checking this for every
-		// evaluation.
-		graphs->items[i].startBitIndex = graphStartBitIndex(&graphs->items[i]);
 	}
 
 	return graphs;

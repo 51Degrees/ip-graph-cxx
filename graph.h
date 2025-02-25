@@ -125,7 +125,6 @@ typedef struct fiftyone_degrees_ipi_cg_info_t {
 typedef struct fiftyone_degrees_ipi_cg_t {
 	fiftyoneDegreesIpiCgInfo* info;
 	fiftyoneDegreesCollection* collection;
-	byte startBitIndex; /**< The starting bit index in the IP address */
 	fiftyoneDegreesCollectionItem itemInfo; /**< Handle for info */
 } fiftyoneDegreesIpiCg;
 
