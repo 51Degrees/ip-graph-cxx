@@ -26,7 +26,9 @@ A collection graph info contains the following:
 | ---- | ----------- |
 | RecordSize | The size in bytes of each node record |
 | FirstProfileIndex | The first index in the entire collection of profile offsets which is pointed to by the graph results. Meaning that, for a profile offset index returned by evaluation of the graph, the index in the whole collection of profile offsets is `index + FirstProfileIndex` |
+| ProfileCount | The total number of profiles (not group profiles) pointed to by the leaf nodes of the graph. This is used when determining whether the index is for a profile offset or a group (i.e. `index >= ProfileCount`) |
 | FirstProfileGroupIndex | The first index in the entire collection of profile groups which is pointed to by the graph results. Meaning that, for a profile group index returned by evaluation of the graph, the index in the whole collection of profile groups is `index + FirstProfileGroupIndex` |
+| ProfileGroupCount | The total number of profile groups pointed to by the leaf nodes of the graph |
 | ValueMask | The mask and shift used to obtain the next index or value from a node value |
 | ZeroFlag | The mask and shift used to obtain the zero flag from a node value |
 | SkipZero | The mask and shift used to obtain the zero skip bits |
