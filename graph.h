@@ -107,8 +107,14 @@ typedef struct fiftyone_degrees_ipi_cg_info_t {
 	byte componentId; /**< The component id the graph relates to. */
 	byte recordSize; /**< The number of bits per fixed width node. Never more
 					 than 64 bits. */
-	uint64_t graphIndex; /**< The index to the entry record in the header data 
-						 structure for the graph. */
+	uint32_t firstProfileIndex; /**< The index to the entry record in the header data
+								structure for the graph. */
+	uint32_t profileCount; /**< The total number of profiles (not group profiles)
+						   pointed to by the leaf nodes of the graph. */
+	uint32_t firstProfileGroupIndex; /**< The index to the entry record in the header data
+							    structure for the graph. */
+	uint32_t profileGroupCount; /**< The total number of profile groups
+								pointed to by the leaf nodes of the graph */
 	fiftyoneDegreesIpiCgMember zeroFlag; /**< Single bit to indicate if the node
 									     is zero leaf */
 	fiftyoneDegreesIpiCgMember zeroSkip; /**< Bits used to obtain the zero skip */
