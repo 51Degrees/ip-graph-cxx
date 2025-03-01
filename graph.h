@@ -191,7 +191,9 @@ EXTERNAL uint32_t fiftyoneDegreesIpiGraphEvaluate(
 	fiftyoneDegreesException* exception);
 
 /**
- * Obtains the profile index for the IP address and component id provided.
+ * Obtains the profile index for the IP address and component id provided 
+ * populating the buffer provided with trace information. Requires the
+ * definition FIFTYONE_DEGREES_IPI_GRAPH_TRACE to be present.
  * @param graphs array for each component id and IP version
  * @param componentId of the index required
  * @param address IP address to return a profile index for
