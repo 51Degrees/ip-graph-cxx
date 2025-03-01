@@ -71,8 +71,50 @@ typedef struct cursor_t {
 	uint64_t current; // The value of the current item in the graph
 	uint64_t recordIndex; // The current index in the graph collection
 	byte skip; // The number of bits left to be skipped
+	StringBuilder* sb; // String builder used for trace information
 	Item item; // Data for the current item in the graph
 } Cursor;
+
+static void traceNewLine(Cursor* cursor) {
+	StringBuilderAddChar(cursor->sb, '\r');
+	StringBuilderAddChar(cursor->sb, '\n');
+}
+
+static void traceBool(Cursor* cursor, const char* method, bool value) {
+	StringBuilderAddChar(cursor->sb, '\t');
+	StringBuilderAddChars(cursor->sb, method, strlen(method));
+	StringBuilderAddChar(cursor->sb, '=');
+	StringBuilderAddChar(cursor->sb, value ? '1' : '0');
+	traceNewLine(cursor);
+}
+
+static void traceInt(Cursor* cursor, const char* method, int value) {
+	StringBuilderAddChar(cursor->sb, '\t');
+	StringBuilderAddChars(cursor->sb, method, strlen(method));
+	StringBuilderAddChar(cursor->sb, '=');
+	StringBuilderAddInteger(cursor->sb, value);
+	traceNewLine(cursor);
+}
+
+static void traceIteration(Cursor* cursor, bool bit) {
+	StringBuilderAddChar(cursor->sb, '[');
+	StringBuilderAddInteger(cursor->sb, cursor->bitIndex);
+	StringBuilderAddChar(cursor->sb, ']');
+	StringBuilderAddChar(cursor->sb, '=');
+	StringBuilderAddChar(cursor->sb, bit ? '1' : '0');
+	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddInteger(cursor->sb, cursor->skip);
+	traceNewLine(cursor);
+}
+
+#define RESULT "result"
+static void traceResult(Cursor* cursor, uint32_t result) {
+	traceNewLine(cursor);
+	StringBuilderAddChars(cursor->sb, RESULT, sizeof(RESULT) - 1);
+	StringBuilderAddChar(cursor->sb, '=');
+	StringBuilderAddInteger(cursor->sb, (int)result);
+	traceNewLine(cursor);
+}
 
 // The IpType for the version byte.
 static IpType getIpTypeFromVersion(byte version) {
@@ -171,7 +213,11 @@ static uint64_t cursorMove(Cursor* cursor, uint64_t recordIndex) {
 }
 
 // Creates a cursor ready for evaluation with the graph and IP address.
-static Cursor cursorCreate(IpiCg* graph, IpAddress ip, Exception* exception) {
+static Cursor cursorCreate(
+	IpiCg* graph, 
+	IpAddress ip, 
+	StringBuilder* sb,
+	Exception* exception) {
 	Cursor cursor = {
 		graph,
 		ip,
@@ -179,7 +225,8 @@ static Cursor cursorCreate(IpiCg* graph, IpAddress ip, Exception* exception) {
 		exception,
 		0,
 		0,
-		0
+		0,
+		sb
 	};
 	DataReset(&cursor.item.data);
 	return cursor;
@@ -214,29 +261,41 @@ static uint32_t getProfileIndex(Cursor* cursor) {
 
 // True if the cursor value is leaf, otherwise false.
 static bool isLeaf(Cursor* cursor) {
-	return getIsProfileIndex(cursor);
+	bool result = getIsProfileIndex(cursor);
+	traceBool(cursor, "isLeaf", result);
+	return result;
 }
 
 // True if the cursor value has the zero flag set, otherwise false.
 static bool isZeroFlag(Cursor* cursor) {
-	return getMemberValue(cursor->graph->info->zeroFlag, cursor->current) != 0;
+	bool result = getMemberValue(
+		cursor->graph->info->zeroFlag, 
+		cursor->current) != 0;
+	traceBool(cursor, "isZeroFlag", result);
+	return result;
 }
 
 // True if the cursor value is a zero leaf.
 static bool isZeroLeaf(Cursor* cursor) {
-	return isZeroFlag(cursor) && isLeaf(cursor);
+	bool result = isZeroFlag(cursor) && isLeaf(cursor);
+	traceBool(cursor, "isZeroLeaf", result);
+	return result;
 }
 
 // The number of bits to skip for the source if zero is matched.
 static byte getZeroSkip(Cursor* cursor) {
-	return (byte)(cursor->graph->info->zeroSkip.mask == 0 ?
-		0 :
+	byte result = (byte)(cursor->graph->info->zeroSkip.mask == 0 ?
+		1 :
 		getMemberValue(cursor->graph->info->zeroSkip, cursor->current) + 1);
+	traceInt(cursor, "getZeroSkip", result);
+	return result;
 }
 
 // True if the cursor value is a one leaf.
 static bool isOneLeaf(Cursor* cursor) {
-	return isZeroFlag(cursor) == false && isLeaf(cursor);
+	bool result = isZeroFlag(cursor) == false && isLeaf(cursor);
+	traceBool(cursor,"isOneLeaf", result);
+	return result;
 }
 
 // True if the next index is a one leaf.
@@ -247,14 +306,17 @@ static bool isNextOneLeaf(Cursor* cursor) {
 	result = isOneLeaf(cursor);
 	cursor->recordIndex--;
 	cursor->current = current;
+	traceBool(cursor,"isNextOneLeaf", result);
 	return result;
 }
 
 // The number of bits to skip for the source if one is matched.
 static byte getOneSkip(Cursor* cursor) {
-	return (byte)(cursor->graph->info->oneSkip.mask == 0 ?
-		0 :
+	byte result = (byte)(cursor->graph->info->oneSkip.mask == 0 ?
+		1 :
 		getMemberValue(cursor->graph->info->oneSkip, cursor->current) + 1);
+	traceInt(cursor, "getOneSkip", result);
+	return result;
 }
 
 // The number of bits to skip for the source if one is matched against the next
@@ -266,6 +328,7 @@ static byte getNextOneSkip(Cursor* cursor) {
 	result = getOneSkip(cursor);
 	cursor->recordIndex--;
 	cursor->current = current;
+	traceInt(cursor, "getNextOneSkip", result);
 	return result;
 }
 
@@ -361,17 +424,41 @@ static bool selectOne(Cursor* cursor) {
 // index.
 static uint32_t evaluate(Cursor* cursor) {
 	bool found = false;
+	traceNewLine(cursor);
 	cursorMove(cursor, cursor->graph->info->graphIndex);
 	do
 	{
 		if (isBitSet(cursor)) {
+			traceIteration(cursor, 1);
 			found = selectOne(cursor);
 		}
 		else {
+			traceIteration(cursor, 0);
 			found = selectZero(cursor);
 		}
 	} while (found == false);
 	return getProfileIndex(cursor);
+}
+
+static uint32_t ipiGraphEvaluate(
+	fiftyoneDegreesIpiCgArray* graphs,
+	byte componentId,
+	fiftyoneDegreesIpAddress address,
+	StringBuilder* sb,
+	fiftyoneDegreesException* exception) {
+	uint32_t profileIndex = 0;
+	IpiCg* graph;
+	for (uint32_t i = 0; i < graphs->count; i++) {
+		graph = &graphs->items[i];
+		if (address.type == graph->info->version &&
+			componentId == graph->info->componentId) {
+			Cursor cursor = cursorCreate(graph, address, sb, exception);
+			profileIndex = evaluate(&cursor);
+			traceResult(&cursor, profileIndex);
+			break;
+		}
+	}
+	return profileIndex;
 }
 
 static Collection* ipiGraphCreateFromFile(
@@ -496,16 +583,24 @@ uint32_t fiftyoneDegreesIpiGraphEvaluate(
 	byte componentId,
 	fiftyoneDegreesIpAddress address,
 	fiftyoneDegreesException* exception) {
-	uint32_t profileIndex = 0;
-	IpiCg* graph;
-	for (uint32_t i = 0; i < graphs->count; i++) {
-		graph = &graphs->items[i];
-		if (address.type == graph->info->version &&
-			componentId == graph->info->componentId) {
-			Cursor cursor = cursorCreate(graph, address, exception);
-			profileIndex = evaluate(&cursor);
-			break;
-		}
-	}
-	return profileIndex;
+	StringBuilder sb = { NULL, 0 };
+	return ipiGraphEvaluate(graphs, componentId, address, &sb, exception);
+}
+
+uint32_t fiftyoneDegreesIpiGraphEvaluateTrace(
+	fiftyoneDegreesIpiCgArray* graphs,
+	byte componentId,
+	fiftyoneDegreesIpAddress address,
+	char* buffer,
+	int const length,
+	fiftyoneDegreesException* exception) {
+	StringBuilder sb = { buffer, length };
+	uint32_t result = ipiGraphEvaluate(
+		graphs, 
+		componentId, 
+		address, 
+		StringBuilderInit(&sb),
+		exception);
+	StringBuilderAddChar(&sb, '\0');
+	return result;
 }
