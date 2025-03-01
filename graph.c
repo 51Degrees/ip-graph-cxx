@@ -75,6 +75,16 @@ typedef struct cursor_t {
 	Item item; // Data for the current item in the graph
 } Cursor;
 
+#ifdef FIFTYONE_DEGREES_IPI_GRAPH_TRACE
+#define TRACE_BOOL(c,m,v) traceBool(c,m,v);
+#define TRACE_INT(c,m,v) traceInt(c,m,v);
+#define TRACE_ITERATION(c,b) traceIteration(c,b);
+#else
+#define TRACE_BOOL(c,m,v)
+#define TRACE_INT(c,m,v)
+#define TRACE_ITERATION(c,b)
+#endif
+
 static void traceNewLine(Cursor* cursor) {
 	StringBuilderAddChar(cursor->sb, '\r');
 	StringBuilderAddChar(cursor->sb, '\n');
@@ -262,7 +272,7 @@ static uint32_t getProfileIndex(Cursor* cursor) {
 // True if the cursor value is leaf, otherwise false.
 static bool isLeaf(Cursor* cursor) {
 	bool result = getIsProfileIndex(cursor);
-	traceBool(cursor, "isLeaf", result);
+	TRACE_BOOL(cursor, "isLeaf", result);
 	return result;
 }
 
@@ -271,14 +281,14 @@ static bool isZeroFlag(Cursor* cursor) {
 	bool result = getMemberValue(
 		cursor->graph->info->zeroFlag, 
 		cursor->current) != 0;
-	traceBool(cursor, "isZeroFlag", result);
+	TRACE_BOOL(cursor, "isZeroFlag", result);
 	return result;
 }
 
 // True if the cursor value is a zero leaf.
 static bool isZeroLeaf(Cursor* cursor) {
 	bool result = isZeroFlag(cursor) && isLeaf(cursor);
-	traceBool(cursor, "isZeroLeaf", result);
+	TRACE_BOOL(cursor, "isZeroLeaf", result);
 	return result;
 }
 
@@ -287,14 +297,14 @@ static byte getZeroSkip(Cursor* cursor) {
 	byte result = (byte)(cursor->graph->info->zeroSkip.mask == 0 ?
 		1 :
 		getMemberValue(cursor->graph->info->zeroSkip, cursor->current) + 1);
-	traceInt(cursor, "getZeroSkip", result);
+	TRACE_INT(cursor, "getZeroSkip", result);
 	return result;
 }
 
 // True if the cursor value is a one leaf.
 static bool isOneLeaf(Cursor* cursor) {
 	bool result = isZeroFlag(cursor) == false && isLeaf(cursor);
-	traceBool(cursor,"isOneLeaf", result);
+	TRACE_BOOL(cursor,"isOneLeaf", result);
 	return result;
 }
 
@@ -306,7 +316,7 @@ static bool isNextOneLeaf(Cursor* cursor) {
 	result = isOneLeaf(cursor);
 	cursor->recordIndex--;
 	cursor->current = current;
-	traceBool(cursor,"isNextOneLeaf", result);
+	TRACE_BOOL(cursor,"isNextOneLeaf", result);
 	return result;
 }
 
@@ -315,7 +325,7 @@ static byte getOneSkip(Cursor* cursor) {
 	byte result = (byte)(cursor->graph->info->oneSkip.mask == 0 ?
 		1 :
 		getMemberValue(cursor->graph->info->oneSkip, cursor->current) + 1);
-	traceInt(cursor, "getOneSkip", result);
+	TRACE_INT(cursor, "getOneSkip", result);
 	return result;
 }
 
@@ -328,7 +338,7 @@ static byte getNextOneSkip(Cursor* cursor) {
 	result = getOneSkip(cursor);
 	cursor->recordIndex--;
 	cursor->current = current;
-	traceInt(cursor, "getNextOneSkip", result);
+	TRACE_INT(cursor, "getNextOneSkip", result);
 	return result;
 }
 
@@ -429,11 +439,11 @@ static uint32_t evaluate(Cursor* cursor) {
 	do
 	{
 		if (isBitSet(cursor)) {
-			traceIteration(cursor, 1);
+			TRACE_ITERATION(cursor, 1);
 			found = selectOne(cursor);
 		}
 		else {
-			traceIteration(cursor, 0);
+			TRACE_ITERATION(cursor, 0);
 			found = selectZero(cursor);
 		}
 	} while (found == false);
