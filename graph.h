@@ -137,6 +137,24 @@ typedef struct fiftyone_degrees_ipi_cg_t {
 } fiftyoneDegreesIpiCg;
 
 /**
+ * The evaluation result from graph collection.
+ */
+typedef struct fiftyone_degrees_ipi_cg_result_t {
+	uint32_t rawOffset; /**< Raw offset as returned by the graph (without mapping applied) */
+	uint32_t offset; /**< Offset in profileOffset or profileGroups collection */
+	bool isGroupOffset; /**< If offset is for a profile group */
+} fiftyoneDegreesIpiCgResult;
+
+/**
+ * Default value for fiftyoneDegreesIpiCgResult
+ */
+#define FIFTYONE_DEGREES_IPI_CG_RESULT_DEAFULT (fiftyoneDegreesIpiCgResult){ \
+	0, \
+	0, \
+	false \
+}
+
+/**
  * An array of all the component graphs and collections available.
  */
 FIFTYONE_DEGREES_ARRAY_TYPE(fiftyoneDegreesIpiCg,)
@@ -192,7 +210,7 @@ EXTERNAL fiftyoneDegreesIpiCgArray* fiftyoneDegreesIpiGraphCreateFromFile(
  * exception occurs. See exceptions.h.
  * @return the index of the profile associated with the IP address.
  */
-EXTERNAL uint32_t fiftyoneDegreesIpiGraphEvaluate(
+EXTERNAL fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluate(
 	fiftyoneDegreesIpiCgArray* graphs,
 	byte componentId,
 	fiftyoneDegreesIpAddress address,
@@ -211,7 +229,7 @@ EXTERNAL uint32_t fiftyoneDegreesIpiGraphEvaluate(
  * exception occurs. See exceptions.h.
  * @return the index of the profile associated with the IP address.
  */
-EXTERNAL uint32_t fiftyoneDegreesIpiGraphEvaluateTrace(
+EXTERNAL fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluateTrace(
 	fiftyoneDegreesIpiCgArray* graphs,
 	byte componentId,
 	fiftyoneDegreesIpAddress address,
