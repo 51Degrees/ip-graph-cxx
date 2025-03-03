@@ -450,6 +450,12 @@ static uint32_t evaluate(Cursor* cursor) {
 	return getProfileIndex(cursor);
 }
 
+/// <summary>
+/// Applies profile mappings from graph info to evaluation result.
+/// </summary>
+/// <param name="profileIndex">Value returned by the graph.</param>
+/// <param name="graph">Graph that returned the value.</param>
+/// <returns>Mapped profile/group offset and type flag.</returns>
 static fiftyoneDegreesIpiCgResult toResult(
 	const uint32_t profileIndex,
 	const IpiCg * const graph) {
