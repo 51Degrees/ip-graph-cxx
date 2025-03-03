@@ -208,7 +208,7 @@ EXTERNAL fiftyoneDegreesIpiCgArray* fiftyoneDegreesIpiGraphCreateFromFile(
  * @param address IP address to return a profile index for
  * @param exception pointer to an exception data structure to be used if an
  * exception occurs. See exceptions.h.
- * @return the index of the profile associated with the IP address.
+ * @return the index of the profile (or group) associated with the IP address.
  */
 EXTERNAL fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluate(
 	fiftyoneDegreesIpiCgArray* graphs,
@@ -227,7 +227,7 @@ EXTERNAL fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluate(
  * @param length of the buffer
  * @param exception pointer to an exception data structure to be used if an
  * exception occurs. See exceptions.h.
- * @return the index of the profile associated with the IP address.
+ * @return the index of the profile (or group) associated with the IP address.
  */
 EXTERNAL fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluateTrace(
 	fiftyoneDegreesIpiCgArray* graphs,
