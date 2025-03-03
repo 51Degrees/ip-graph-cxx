@@ -183,8 +183,9 @@ EXTERNAL fiftyoneDegreesIpiCgArray* fiftyoneDegreesIpiGraphCreateFromFile(
 
 /**
  * Obtains the profile index for the IP address and component id provided.
- * @param graphs
- * @param componentIdt
+ * @param graphs array for each component id and IP version
+ * @param componentId of the index required
+ * @param address IP address to return a profile index for
  * @param exception pointer to an exception data structure to be used if an
  * exception occurs. See exceptions.h.
  * @return the index of the profile associated with the IP address.
@@ -193,6 +194,27 @@ EXTERNAL uint32_t fiftyoneDegreesIpiGraphEvaluate(
 	fiftyoneDegreesIpiCgArray* graphs,
 	byte componentId,
 	fiftyoneDegreesIpAddress address,
+	fiftyoneDegreesException* exception);
+
+/**
+ * Obtains the profile index for the IP address and component id provided 
+ * populating the buffer provided with trace information. Requires the
+ * definition FIFTYONE_DEGREES_IPI_GRAPH_TRACE to be present.
+ * @param graphs array for each component id and IP version
+ * @param componentId of the index required
+ * @param address IP address to return a profile index for
+ * @param buffer that will be populated with the trace information
+ * @param length of the buffer
+ * @param exception pointer to an exception data structure to be used if an
+ * exception occurs. See exceptions.h.
+ * @return the index of the profile associated with the IP address.
+ */
+EXTERNAL uint32_t fiftyoneDegreesIpiGraphEvaluateTrace(
+	fiftyoneDegreesIpiCgArray* graphs,
+	byte componentId,
+	fiftyoneDegreesIpAddress address,
+	char* buffer,
+	int const length,
 	fiftyoneDegreesException* exception);
 
 /**
