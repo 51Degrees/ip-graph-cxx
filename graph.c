@@ -450,13 +450,33 @@ static uint32_t evaluate(Cursor* cursor) {
 	return getProfileIndex(cursor);
 }
 
-static uint32_t ipiGraphEvaluate(
+static fiftyoneDegreesIpiCgResult toResult(
+	const uint32_t profileIndex,
+	const IpiCg * const graph) {
+	fiftyoneDegreesIpiCgResult result = {
+		profileIndex,
+		0,
+		false,
+	};
+	if (profileIndex < graph->info->profileCount) {
+		result.offset = profileIndex + graph->info->firstProfileIndex;
+	}
+	else {
+		const uint32_t groupIndex = profileIndex - graph->info->profileCount;
+		result.offset = groupIndex + graph->info->firstProfileGroupIndex;
+		result.isGroupOffset = true;
+	}
+	return result;
+}
+
+static fiftyoneDegreesIpiCgResult ipiGraphEvaluate(
 	fiftyoneDegreesIpiCgArray* graphs,
 	byte componentId,
 	fiftyoneDegreesIpAddress address,
 	StringBuilder* sb,
 	fiftyoneDegreesException* exception) {
 	uint32_t profileIndex = 0;
+	fiftyoneDegreesIpiCgResult result = FIFTYONE_DEGREES_IPI_CG_RESULT_DEAFULT;
 	IpiCg* graph;
 	for (uint32_t i = 0; i < graphs->count; i++) {
 		graph = &graphs->items[i];
@@ -465,10 +485,11 @@ static uint32_t ipiGraphEvaluate(
 			Cursor cursor = cursorCreate(graph, address, sb, exception);
 			profileIndex = evaluate(&cursor);
 			traceResult(&cursor, profileIndex);
+			result = toResult(profileIndex, graph);
 			break;
 		}
 	}
-	return profileIndex;
+	return result;
 }
 
 static Collection* ipiGraphCreateFromFile(
@@ -588,7 +609,7 @@ fiftyoneDegreesIpiCgArray* fiftyoneDegreesIpiGraphCreateFromFile(
 		exception);
 }
 
-uint32_t fiftyoneDegreesIpiGraphEvaluate(
+fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluate(
 	fiftyoneDegreesIpiCgArray* graphs,
 	byte componentId,
 	fiftyoneDegreesIpAddress address,
@@ -597,7 +618,7 @@ uint32_t fiftyoneDegreesIpiGraphEvaluate(
 	return ipiGraphEvaluate(graphs, componentId, address, &sb, exception);
 }
 
-uint32_t fiftyoneDegreesIpiGraphEvaluateTrace(
+fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluateTrace(
 	fiftyoneDegreesIpiCgArray* graphs,
 	byte componentId,
 	fiftyoneDegreesIpAddress address,
@@ -605,7 +626,7 @@ uint32_t fiftyoneDegreesIpiGraphEvaluateTrace(
 	int const length,
 	fiftyoneDegreesException* exception) {
 	StringBuilder sb = { buffer, length };
-	uint32_t result = ipiGraphEvaluate(
+	const fiftyoneDegreesIpiCgResult result = ipiGraphEvaluate(
 		graphs, 
 		componentId, 
 		address, 
