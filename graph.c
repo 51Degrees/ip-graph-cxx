@@ -469,8 +469,10 @@ static fiftyoneDegreesIpiCgResult toResult(
 	}
 	else {
 		const uint32_t groupIndex = profileIndex - graph->info->profileCount;
-		result.offset = groupIndex + graph->info->firstProfileGroupIndex;
-		result.isGroupOffset = true;
+		if (groupIndex < graph->info->profileGroupCount) {
+			result.offset = groupIndex + graph->info->firstProfileGroupIndex;
+			result.isGroupOffset = true;
+		}
 	}
 	return result;
 }
@@ -482,7 +484,7 @@ static fiftyoneDegreesIpiCgResult ipiGraphEvaluate(
 	StringBuilder* sb,
 	fiftyoneDegreesException* exception) {
 	uint32_t profileIndex = 0;
-	fiftyoneDegreesIpiCgResult result = FIFTYONE_DEGREES_IPI_CG_RESULT_DEAFULT;
+	fiftyoneDegreesIpiCgResult result = FIFTYONE_DEGREES_IPI_CG_RESULT_DEFAULT;
 	IpiCg* graph;
 	for (uint32_t i = 0; i < graphs->count; i++) {
 		graph = &graphs->items[i];
@@ -517,13 +519,19 @@ static Collection* ipiGraphCreateFromFile(
 static Collection* ipiGraphCreateFromMemory(
 	CollectionHeader header, 
 	void* state) {
-	MemoryReader* reader = (MemoryReader*)state;
-	byte* current = reader->current;
-	reader->current = reader->startByte + header.startPosition;
+	MemoryReader* const reader = (MemoryReader*)state;
+	byte* const current = reader->current;
+	byte* const target = reader->startByte + header.startPosition;
+	const bool shouldRestore = current != target;
+	if (shouldRestore) {
+		reader->current = target;
+	}
 	Collection* collection = CollectionCreateFromMemory(
 		(MemoryReader*)state,
 		header);
-	reader->current = current;
+	if (shouldRestore) {
+		reader->current = current;
+	}
 	return collection;
 }
 
