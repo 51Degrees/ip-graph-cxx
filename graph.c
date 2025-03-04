@@ -469,8 +469,10 @@ static fiftyoneDegreesIpiCgResult toResult(
 	}
 	else {
 		const uint32_t groupIndex = profileIndex - graph->info->profileCount;
-		result.offset = groupIndex + graph->info->firstProfileGroupIndex;
-		result.isGroupOffset = true;
+		if (groupIndex < graph->info->profileGroupCount) {
+			result.offset = groupIndex + graph->info->firstProfileGroupIndex;
+			result.isGroupOffset = true;
+		}
 	}
 	return result;
 }
