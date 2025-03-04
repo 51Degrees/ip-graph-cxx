@@ -207,6 +207,8 @@ static uint64_t cursorMove(Cursor* cursor, uint64_t recordIndex) {
 		&cursor->item,
 		cursor->ex);
 
+	// TODO: Handle `cursor->ex` if set above.
+
 	// Set the record index.
 	cursor->recordIndex = recordIndex;
 
