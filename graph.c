@@ -569,8 +569,7 @@ static IpiCgArray* ipiGraphCreate(
 		// Create a collection for the graph.
 		// TODO create collections that support 64 bit sizes.
 		CollectionHeader header;
-		header.count = 0;
-		header.length = (uint32_t)graphs->items[i].info->graphLength;
+		header.count = header.length = (uint32_t)graphs->items[i].info->graphLength;
 		header.startPosition = (uint32_t)graphs->items[i].info->graphStartPosition;
 		graphs->items[i].collection = collectionCreate(
 			header,
