@@ -517,13 +517,19 @@ static Collection* ipiGraphCreateFromFile(
 static Collection* ipiGraphCreateFromMemory(
 	CollectionHeader header, 
 	void* state) {
-	MemoryReader* reader = (MemoryReader*)state;
-	byte* current = reader->current;
-	reader->current = reader->startByte + header.startPosition;
+	MemoryReader* const reader = (MemoryReader*)state;
+	byte* const current = reader->current;
+	byte* const target = reader->startByte + header.startPosition;
+	const bool shouldRestore = current != target;
+	if (shouldRestore) {
+		reader->current = target;
+	}
 	Collection* collection = CollectionCreateFromMemory(
 		(MemoryReader*)state,
 		header);
-	reader->current = current;
+	if (shouldRestore) {
+		reader->current = current;
+	}
 	return collection;
 }
 
