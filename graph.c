@@ -482,7 +482,7 @@ static fiftyoneDegreesIpiCgResult ipiGraphEvaluate(
 	StringBuilder* sb,
 	fiftyoneDegreesException* exception) {
 	uint32_t profileIndex = 0;
-	fiftyoneDegreesIpiCgResult result = FIFTYONE_DEGREES_IPI_CG_RESULT_DEAFULT;
+	fiftyoneDegreesIpiCgResult result = FIFTYONE_DEGREES_IPI_CG_RESULT_DEFAULT;
 	IpiCg* graph;
 	for (uint32_t i = 0; i < graphs->count; i++) {
 		graph = &graphs->items[i];
