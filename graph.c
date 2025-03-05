@@ -85,16 +85,29 @@ typedef struct cursor_t {
 #define TRACE_ITERATION(c,b)
 #endif
 
+// Forward declaration.
+static uint64_t getValue(Cursor* cursor);
+
 static void traceNewLine(Cursor* cursor) {
 	StringBuilderAddChar(cursor->sb, '\r');
 	StringBuilderAddChar(cursor->sb, '\n');
 }
 
+#define TRACE_TRUE "true"
+#define TRACE_FALSE "false"
 static void traceBool(Cursor* cursor, const char* method, bool value) {
 	StringBuilderAddChar(cursor->sb, '\t');
 	StringBuilderAddChars(cursor->sb, method, strlen(method));
 	StringBuilderAddChar(cursor->sb, '=');
-	StringBuilderAddChar(cursor->sb, value ? '1' : '0');
+	if (value) {
+		StringBuilderAddChars(cursor->sb, TRACE_TRUE, sizeof(TRACE_TRUE) - 1);
+	}
+	else {
+		StringBuilderAddChars(
+			cursor->sb,
+			TRACE_FALSE,
+			sizeof(TRACE_FALSE) - 1);
+	}
 	traceNewLine(cursor);
 }
 
@@ -114,7 +127,11 @@ static void traceIteration(Cursor* cursor, bool bit) {
 	StringBuilderAddChar(cursor->sb, bit ? '1' : '0');
 	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddInteger(cursor->sb, cursor->skip);
+	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddInteger(cursor->sb, cursor->recordIndex);
+	StringBuilderAddChar(cursor->sb, ' ');
 	traceNewLine(cursor);
+	getValue(cursor);
 }
 
 #define RESULT "result"
@@ -136,10 +153,19 @@ static IpType getIpTypeFromVersion(byte version) {
 	}
 }
 
+// True if all the bytes of the address have been consumed.
+static bool isExhausted(Cursor* cursor) {
+	byte byteIndex = cursor->bitIndex / 8;
+	return byteIndex >= cursor->ip.length;
+}
+
 // True if the bit at the current cursor->bitIndex is 1, otherwise 0.
 static bool isBitSet(Cursor* cursor) {
 	byte byteIndex = cursor->bitIndex / 8;
 	byte bitIndex = 7 - (cursor->bitIndex % 8);
+	if (byteIndex >= cursor->ip.length) {
+		return 0;
+	}
 	return (cursor->ip.value[byteIndex] & masks[bitIndex]) != 0;
 }
 
@@ -462,7 +488,7 @@ static uint32_t evaluate(Cursor* cursor) {
 			TRACE_ITERATION(cursor, 0);
 			found = selectZero(cursor);
 		}
-	} while (found == false);
+	} while (found == false && isExhausted(cursor) == false);
 	return getProfileIndex(cursor);
 }
 
