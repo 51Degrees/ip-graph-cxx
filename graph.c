@@ -98,7 +98,7 @@ static void traceBool(Cursor* cursor, const char* method, bool value) {
 	traceNewLine(cursor);
 }
 
-static void traceInt(Cursor* cursor, const char* method, int value) {
+static void traceInt(Cursor* cursor, const char* method, int64_t value) {
 	StringBuilderAddChar(cursor->sb, '\t');
 	StringBuilderAddChars(cursor->sb, method, strlen(method));
 	StringBuilderAddChar(cursor->sb, '=');
@@ -254,19 +254,26 @@ static uint64_t getMemberValue(IpiCgMember member, uint64_t source) {
 
 // Returns the value of the current item.
 static uint64_t getValue(Cursor* cursor) {
-	return getMemberValue(cursor->graph->info->value, cursor->current);
+	uint64_t result = getMemberValue(cursor->graph->info->value, cursor->current);
+	TRACE_INT(cursor, "getValue", result);
+	return result;
 }
 
 // True if the cursor is currently positioned on a leaf and therefore profile 
 // index.
 static bool getIsProfileIndex(Cursor* cursor) {
-	return getValue(cursor) >= cursor->graph->info->graphCount;
+	bool result = getValue(cursor) >= cursor->graph->info->graphCount;
+	TRACE_BOOL(cursor, "getIsProfileIndex", result);
+	return result;
 }
 
 // The index of the profile associated with the value if this is a leaf value.
 // getIsProfileIndex must be called before getting the profile index.
 static uint32_t getProfileIndex(Cursor* cursor) {
-	return (uint32_t)(getValue(cursor) - cursor->graph->info->graphCount);
+	uint32_t result = (uint32_t)(
+		getValue(cursor) - cursor->graph->info->graphCount);
+	TRACE_INT(cursor, "getProfileIndex", result);
+	return result;
 }
 
 // True if the cursor value is leaf, otherwise false.
@@ -366,7 +373,16 @@ static bool selectZero(Cursor* cursor) {
 	// move to it.
 	cursor->skip--;
 	if (cursor->skip == 0) {
-		cursorMove(cursor, cursor->recordIndex + 1);
+		if (isZeroFlag(cursor)) {
+			// If the zero flag is set then the next zero node is not the next
+			// consecutive node but the index that this not points to.
+			cursorMove(cursor, (uint32_t)getValue(cursor));
+		}
+		else {
+			// If the zero flag is not set then the next zero node is the next
+			// entry in the collection.
+			cursorMove(cursor, cursor->recordIndex + 1);
+		}
 	}
 
 	// Completed processing the selected zero bit. Return false as no profile
@@ -390,9 +406,9 @@ static bool selectOne(Cursor* cursor) {
 	}
 
 	// An additional check is needed for the one data structure as the current
-	// node might relate to the zero leaf. If this is the case then it's 
+	// node might relate to the zero node. If this is the case then it's 
 	// actually the next node that might contain the one leaf.
-	if (isZeroLeaf(cursor) && isNextOneLeaf(cursor)) {
+	if (isZeroFlag(cursor) && isNextOneLeaf(cursor)) {
 		cursorMove(cursor, cursor->recordIndex + 1);
 		return true;
 	}
@@ -403,7 +419,7 @@ static bool selectOne(Cursor* cursor) {
 	// next node if this is the case.
 	if (cursor->skip == 0)
 	{
-		if (isZeroLeaf(cursor)) {
+		if (isZeroFlag(cursor)) {
 			cursor->skip = getNextOneSkip(cursor);
 		}
 		else {
@@ -418,7 +434,7 @@ static bool selectOne(Cursor* cursor) {
 	cursor->skip--;
 	if (cursor->skip == 0)
 	{
-		if (isZeroLeaf(cursor)) {
+		if (isZeroFlag(cursor)) {
 			cursorMove(cursor, cursor->recordIndex + 1);
 		}
 		cursorMove(cursor, (uint32_t)getValue(cursor));
