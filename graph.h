@@ -39,26 +39,10 @@
 #endif
 #include "../common-cxx/data.h"
 #include "../common-cxx/exceptions.h"
-#include "../common-cxx/threading.h"
-#include "../common-cxx/file.h"
 #include "../common-cxx/collection.h"
-#include "../common-cxx/evidence.h"
 #include "../common-cxx/list.h"
-#include "../common-cxx/resource.h"
-#include "../common-cxx/properties.h"
 #include "../common-cxx/status.h"
-#include "../common-cxx/date.h"
-#include "../common-cxx/pool.h"
-#include "../common-cxx/component.h"
-#include "../common-cxx/property.h"
-#include "../common-cxx/value.h"
-#include "../common-cxx/profile.h"
-#include "../common-cxx/overrides.h"
-#include "../common-cxx/config.h"
-#include "../common-cxx/dataset.h"
 #include "../common-cxx/array.h"
-#include "../common-cxx/results.h"
-#include "../common-cxx/float.h"
 
  /**
  * @ingroup FiftyOneDegreesIpIntelligence
