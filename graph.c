@@ -156,7 +156,7 @@ static IpType getIpTypeFromVersion(byte version) {
 // True if all the bytes of the address have been consumed.
 static bool isExhausted(Cursor* cursor) {
 	byte byteIndex = cursor->bitIndex / 8;
-	return byteIndex >= cursor->ip.length;
+	return byteIndex >= sizeof(cursor->ip.value);
 }
 
 // True if the bit at the current cursor->bitIndex is 1, otherwise 0.
