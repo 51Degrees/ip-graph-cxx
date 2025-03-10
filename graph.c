@@ -30,6 +30,7 @@ MAP_TYPE(IpiCg)
 MAP_TYPE(IpiCgArray)
 MAP_TYPE(IpiCgMember)
 MAP_TYPE(IpiCgInfo)
+MAP_TYPE(IpiCgMemberValue)
 MAP_TYPE(Collection)
 
 /**
@@ -61,6 +62,18 @@ typedef struct file_collection_t {
 // Function used to create the collection for each of the graphs.
 typedef Collection*(*collectionCreate)(CollectionHeader header, void* state);
 
+// Structure for the variables.
+#pragma pack(push, 1)
+typedef struct variable_t {
+	uint32_t startIndex; // Start index in the values collection.
+	byte length; // Number of bits from high to low to compare
+	union {
+		uint64_t value;  // Bits for the variable
+		byte bytes[sizeof(uint64_t)]; // Array of 8 bytes
+	};
+} Variable;
+#pragma pack(pop)
+
 // Cursor used to traverse the graph for each of the bits in the IP address.
 typedef struct cursor_t {
 	IpiCg* const graph; // Graph the cursor is working with
@@ -69,8 +82,9 @@ typedef struct cursor_t {
 				   // value array
 	Exception* ex; // Current exception instance
 	uint64_t current; // The value of the current item in the graph
-	uint64_t recordIndex; // The current index in the graph collection
-	byte skip; // The number of bits left to be skipped
+	uint32_t index; // The current index in the graph values collection
+	uint32_t previous; // The previous index in the graph values collection
+	Variable variable; // The current variable that relates to the record index
 	StringBuilder* sb; // String builder used for trace information
 	Item item; // Data for the current item in the graph
 } Cursor;
@@ -86,7 +100,7 @@ typedef struct cursor_t {
 #endif
 
 // Forward declaration.
-static uint64_t getValue(Cursor* cursor);
+static uint32_t getValue(Cursor* cursor);
 
 static void traceNewLine(Cursor* cursor) {
 	StringBuilderAddChar(cursor->sb, '\r');
@@ -126,9 +140,7 @@ static void traceIteration(Cursor* cursor, bool bit) {
 	StringBuilderAddChar(cursor->sb, '=');
 	StringBuilderAddChar(cursor->sb, bit ? '1' : '0');
 	StringBuilderAddChar(cursor->sb, ' ');
-	StringBuilderAddInteger(cursor->sb, cursor->skip);
-	StringBuilderAddChar(cursor->sb, ' ');
-	StringBuilderAddInteger(cursor->sb, cursor->recordIndex);
+	StringBuilderAddInteger(cursor->sb, cursor->index);
 	StringBuilderAddChar(cursor->sb, ' ');
 	traceNewLine(cursor);
 	getValue(cursor);
@@ -159,18 +171,90 @@ static bool isExhausted(Cursor* cursor) {
 	return byteIndex >= sizeof(cursor->ip.value);
 }
 
-// True if the bit at the current cursor->bitIndex is 1, otherwise 0.
-static bool isBitSet(Cursor* cursor) {
-	byte byteIndex = cursor->bitIndex / 8;
-	byte bitIndex = 7 - (cursor->bitIndex % 8);
+// Gets the bit for the given bit index in the IP address.
+static bool getIpBitForIndex(Cursor* cursor, byte ipBitIndex) {
+	Exception* exception = cursor->ex;
+	byte byteIndex = ipBitIndex / 8;
+	byte bitIndex = 7 - (ipBitIndex % 8);
 	if (byteIndex >= cursor->ip.length) {
+		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
 		return 0;
 	}
 	return (cursor->ip.value[byteIndex] & masks[bitIndex]) != 0;
 }
 
+// Gets the bit for the given bit index of the variable value.
+static bool getVariableBitForIndex(Cursor* cursor, byte varBitIndex) {
+	Exception* exception = cursor->ex;
+	byte byteIndex = varBitIndex / 8;
+	byte bitIndex = 7 - (varBitIndex % 8);
+	if (byteIndex >= sizeof(cursor->variable.bytes)) {
+		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
+		return 0;
+	}
+	return (cursor->variable.bytes[byteIndex] & masks[bitIndex]) != 0;
+}
+
+// Comparer used to determine if the selected variable is higher or lower than
+// the target.
+static int setVariableComparer(
+	void* state,
+	Item* item,
+	long curIndex,
+	Exception* exception) {
+	Variable* variable = (Variable*)item->data.ptr;
+	Cursor* cursor = (Cursor*)state;
+	
+	// Store a copy of the variable in the cursor to avoid needing to fetch it
+	// again should it prove to be the correct result.
+	cursor->variable = *variable;
+	
+	return variable->startIndex - cursor->index;
+}
+
+// Sets the cursor variable to the correct settings for the current value 
+// record index. Uses the binary search feature of the collection.
+static void setVariable(Cursor* cursor) {
+	Exception* exception = cursor->ex;
+
+	// Use binary search to find the index for the variable. The comparer 
+	// records the last variable checked the cursor will have the correct
+	// variable after the search operation.
+	uint32_t index = CollectionBinarySearch(
+		cursor->graph->variables,
+		&cursor->item,
+		0,
+		cursor->graph->variables->count - 1,
+		(void*)cursor,
+		setVariableComparer,
+		cursor->ex);
+
+	// Validate that the variable set has a start index equal to or grater than
+	// the one required.
+	if (cursor->variable.startIndex < cursor->index) {
+		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
+		return;
+	}
+
+	// Validate that the next variable has a higher start index than the one
+	// found. If not then set an exception as the data structure has become
+	// corrupt.
+	if (index < CollectionGetCount(cursor->graph->variables)) {
+		Variable next = *(Variable*)cursor->graph->variables->get(
+			cursor->graph->variables,
+			index + 1,
+			&cursor->item,
+			cursor->ex);
+		COLLECTION_RELEASE(cursor->graph->variables, &cursor->item);
+		if (cursor->index > next.startIndex) {
+			EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
+			return;
+		}
+	}
+}
+
 /*
- * Function: extract_u64
+ * Function: extractValue
  * ---------------------
  *  Extracts an unsigned 64-bit integer from a byte array,
  *  starting from a specified bit index (0-7) in the first byte.
@@ -187,7 +271,7 @@ static bool isBitSet(Cursor* cursor) {
  * bit is encountered first in each byte).
  */
 uint64_t extractValue(
-	const byte recordSize,
+	const uint16_t recordSize,
 	const byte* buf, 
 	unsigned bitIndex) {
 	uint64_t result = 0;
@@ -217,34 +301,44 @@ uint64_t extractValue(
 // Moves the cursor to the index in the collection returning the value of the
 // record. Uses CgInfo.recordSize to convert the byte array of the record into
 // a 64 bit positive integer.
-static uint64_t cursorMove(Cursor* cursor, uint64_t recordIndex) {
+static uint64_t cursorMove(Cursor* cursor, uint32_t recordIndex) {
+
+	Exception* exception = cursor->ex;
 
 	// Work out the byte index for the record index and the starting bit index
 	// within that byte.
-	uint64_t startBitIndex = (recordIndex * cursor->graph->info->recordSize);
+	uint64_t startBitIndex = (
+		recordIndex * 
+		cursor->graph->info->value.recordSize);
 	uint64_t byteIndex = startBitIndex / 8;
 	byte highBitIndex = 7 - (startBitIndex % 8);
 
 	// Get a pointer to that byte from the collection.
-	// TODO change to 64 bit variant.
-	byte* ptr = (byte*)cursor->graph->collection->get(
-		cursor->graph->collection,
+	byte* ptr = (byte*)cursor->graph->values->get(
+		cursor->graph->values,
 		(uint32_t)byteIndex,
 		&cursor->item,
 		cursor->ex);
+	if (EXCEPTION_FAILED) return 0;
 
 	// Set the record index.
-	cursor->recordIndex = recordIndex;
+	cursor->index = recordIndex;
 
 	// Move the bits in the bytes pointed to create the requirement unsigned
 	// long.
 	cursor->current = extractValue(
-		cursor->graph->info->recordSize,
+		cursor->graph->info->value.recordSize,
 		ptr, 
 		highBitIndex);
 
-	// Release the data and then return the current cursor value.
+	// Release the data. 
 	cursor->item.collection->release(&cursor->item);
+
+	// Set the correct variable to use for any compare operations.
+	setVariable(cursor);
+	if (EXCEPTION_FAILED) return 0;
+
+	// Then return the current cursor value.
 	return cursor->current;
 }
 
@@ -254,16 +348,13 @@ static Cursor cursorCreate(
 	IpAddress ip, 
 	StringBuilder* sb,
 	Exception* exception) {
-	Cursor cursor = {
-		graph,
-		ip,
-		0,
-		exception,
-		0,
-		0,
-		0,
-		sb
-	};
+	Cursor cursor = { graph, ip };
+	cursor.ex = exception;
+	cursor.sb = sb;
+	cursor.variable.length = 0;
+	cursor.variable.startIndex = 0;
+	cursor.current = 0;
+	cursor.index = 0;
 	DataReset(&cursor.item.data);
 	return cursor;
 }
@@ -274,13 +365,15 @@ static IpType getIpTypeFromGraph(IpiCgInfo* info) {
 }
 
 // Manipulates the source using the mask and shift parameters of the member.
-static uint64_t getMemberValue(IpiCgMember member, uint64_t source) {
-	return (source & member.mask) >> member.shift;
+static uint32_t getMemberValue(IpiCgMember member, uint64_t source) {
+	return (uint32_t)(source & member.mask) >> member.shift;
 }
 
 // Returns the value of the current item.
-static uint64_t getValue(Cursor* cursor) {
-	uint64_t result = getMemberValue(cursor->graph->info->value, cursor->current);
+static uint32_t getValue(Cursor* cursor) {
+	uint32_t result = getMemberValue(
+		cursor->graph->info->value.value, 
+		cursor->current);
 	TRACE_INT(cursor, "getValue", result);
 	return result;
 }
@@ -288,7 +381,8 @@ static uint64_t getValue(Cursor* cursor) {
 // True if the cursor is currently positioned on a leaf and therefore profile 
 // index.
 static bool getIsProfileIndex(Cursor* cursor) {
-	bool result = getValue(cursor) >= cursor->graph->info->graphCount;
+	bool result = getValue(cursor) >= 
+		cursor->graph->info->value.collection.count;
 	TRACE_BOOL(cursor, "getIsProfileIndex", result);
 	return result;
 }
@@ -297,7 +391,7 @@ static bool getIsProfileIndex(Cursor* cursor) {
 // getIsProfileIndex must be called before getting the profile index.
 static uint32_t getProfileIndex(Cursor* cursor) {
 	uint32_t result = (uint32_t)(
-		getValue(cursor) - cursor->graph->info->graphCount);
+		getValue(cursor) - cursor->graph->info->value.collection.count);
 	TRACE_INT(cursor, "getProfileIndex", result);
 	return result;
 }
@@ -312,7 +406,7 @@ static bool isLeaf(Cursor* cursor) {
 // True if the cursor value has the zero flag set, otherwise false.
 static bool isZeroFlag(Cursor* cursor) {
 	bool result = getMemberValue(
-		cursor->graph->info->zeroFlag, 
+		cursor->graph->info->value.zeroFlag, 
 		cursor->current) != 0;
 	TRACE_BOOL(cursor, "isZeroFlag", result);
 	return result;
@@ -325,15 +419,6 @@ static bool isZeroLeaf(Cursor* cursor) {
 	return result;
 }
 
-// The number of bits to skip for the source if zero is matched.
-static byte getZeroSkip(Cursor* cursor) {
-	byte result = (byte)(cursor->graph->info->zeroSkip.mask == 0 ?
-		1 :
-		getMemberValue(cursor->graph->info->zeroSkip, cursor->current) + 1);
-	TRACE_INT(cursor, "getZeroSkip", result);
-	return result;
-}
-
 // True if the cursor value is a one leaf.
 static bool isOneLeaf(Cursor* cursor) {
 	bool result = isZeroFlag(cursor) == false && isLeaf(cursor);
@@ -343,150 +428,203 @@ static bool isOneLeaf(Cursor* cursor) {
 
 // True if the next index is a one leaf.
 static bool isNextOneLeaf(Cursor* cursor) {
+	Exception* exception = cursor->ex;
 	bool result = false;
 	uint64_t current = cursor->current;
-	cursorMove(cursor, cursor->recordIndex + 1);
+	cursorMove(cursor, cursor->index + 1);
+	if (EXCEPTION_FAILED) return false;
 	result = isOneLeaf(cursor);
-	cursor->recordIndex--;
+	cursor->index--;
 	cursor->current = current;
 	TRACE_BOOL(cursor,"isNextOneLeaf", result);
 	return result;
 }
 
-// The number of bits to skip for the source if one is matched.
-static byte getOneSkip(Cursor* cursor) {
-	byte result = (byte)(cursor->graph->info->oneSkip.mask == 0 ?
-		1 :
-		getMemberValue(cursor->graph->info->oneSkip, cursor->current) + 1);
-	TRACE_INT(cursor, "getOneSkip", result);
-	return result;
-}
-
-// The number of bits to skip for the source if one is matched against the next
-// value.
-static byte getNextOneSkip(Cursor* cursor) {
-	byte result;
-	uint64_t current = cursor->current;
-	cursorMove(cursor, cursor->recordIndex + 1);
-	result = getOneSkip(cursor);
-	cursor->recordIndex--;
-	cursor->current = current;
-	TRACE_INT(cursor, "getNextOneSkip", result);
-	return result;
-}
-
 /// <summary>
-/// Moves the cursor for a zero bit.
+/// Moves the cursor for a lower entry.
 /// </summary>
 /// <returns>
 /// True if a leaf has been found and getProfileIndex can be used to return a 
 /// result.
 /// </returns>
-static bool selectZero(Cursor* cursor) {
+static bool selectLower(Cursor* cursor) {
+	Exception* exception = cursor->ex;
 
-	// Check the current node for the bit to see if it is a zero leaf.
+	// Check the current entry to see if it is a zero leaf.
 	if (isZeroLeaf(cursor)) {
 		return true;
 	}
 
-	// If all the bits have finished being skipped then check the current node
-	// to determine how many bits can be skipped by the next node.
-	if (cursor->skip == 0) {
-		cursor->skip = getZeroSkip(cursor);
+	if (isZeroFlag(cursor)) {
+		// If the zero flag is set then the next zero entry is not the next
+		// consecutive entry but the index that this now points to.
+		cursorMove(cursor, (uint32_t)getValue(cursor));
+		if (EXCEPTION_FAILED) return false;
+	}
+	else {
+		// If the zero flag is not set then the next zero entry is the next
+		// entry in the collection.
+		cursorMove(cursor, cursor->index + 1);
+		if (EXCEPTION_FAILED) return false;
 	}
 
-	// Decrease the skip counter and if the current node needs to be updated
-	// move to it.
-	cursor->skip--;
-	if (cursor->skip == 0) {
-		if (isZeroFlag(cursor)) {
-			// If the zero flag is set then the next zero node is not the next
-			// consecutive node but the index that this not points to.
-			cursorMove(cursor, (uint32_t)getValue(cursor));
-		}
-		else {
-			// If the zero flag is not set then the next zero node is the next
-			// entry in the collection.
-			cursorMove(cursor, cursor->recordIndex + 1);
-		}
-	}
-
-	// Completed processing the selected zero bit. Return false as no profile
-	// index is yet found.
-	cursor->bitIndex++;
+	// Return false as no profile index is yet found.
 	return false;
 }
 
 /// <summary>
-/// Moves the cursor for a one bit.
+/// Moves the cursor for an equals.
 /// </summary>
 /// <returns>
 /// True if a leaf has been found and getProfileIndex can be used to return a 
 /// result.
 /// </returns>
-static bool selectOne(Cursor* cursor) {
+static bool selectMatched(Cursor* cursor) {
+	Exception* exception = cursor->ex;
 
-	// Check the current node for the bit to see if it is a one leaf.
+	// Check the current entry to see if it is a matched leaf.
 	if (isOneLeaf(cursor)) {
 		return true;
 	}
 
-	// An additional check is needed for the one data structure as the current
-	// node might relate to the zero node. If this is the case then it's 
-	// actually the next node that might contain the one leaf.
+	// An additional check is needed for the data structure as the current
+	// entry might relate to the lower entry. If this is the case then the next
+	// entry that might contain the equal leaf.
 	if (isZeroFlag(cursor) && isNextOneLeaf(cursor)) {
-		cursorMove(cursor, cursor->recordIndex + 1);
+		cursorMove(cursor, cursor->index + 1);
+		if (EXCEPTION_FAILED) return false;
 		return true;
 	}
 
-	// If all the bits have finished being skipped then check the current node
-	// to determine how many bits can be skipped by the next node. This
-	// involves checking if the current node is the zero leaf and using the
-	// next node if this is the case.
-	if (cursor->skip == 0)
-	{
+	// No leaf has been found so move the cursor to the next record.
+	// Check to see if the lower flag is set meaning the entry needs to be
+	// skipped over.
+	if (isZeroFlag(cursor)) {
+		cursorMove(cursor, cursor->index + 1);
+		if (EXCEPTION_FAILED) return false;
+	}
+
+	// Move to the matched entry indicated.
+	cursorMove(cursor, (uint32_t)getValue(cursor));
+	if (EXCEPTION_FAILED) return false;
+
+	// Completed processing the selected equals entry. Return false as no 
+	// profile index is yet found.
+	return false;
+}
+
+/// <summary>
+/// Moves the cursor to the previous entry, selects the equals option, and then
+/// all the lower options until a leaf is found.
+/// </summary>
+/// <returns>
+/// True if a leaf has been found and getProfileIndex can be used to return a 
+/// result.
+/// </returns>
+static bool selectHigher(Cursor* cursor) {
+	Exception* exception = cursor->ex;
+
+	// Move back to the previous entry.
+	cursorMove(cursor, cursor->previous);
+	if (EXCEPTION_FAILED) return true;
+
+	// Check for the lower flag and if present move to the next entry which 
+	// will be for equals.
+	if (isZeroFlag(cursor)) {
+		cursorMove(cursor, cursor->index + 1);
+		if (EXCEPTION_FAILED) return true;
+	}
+
+	// Follow the equals entry.
+	cursorMove(cursor, (uint32_t)getValue(cursor));
+	if (EXCEPTION_FAILED) return true;
+
+	// Follow the lower entries until a leaf is found.
+	while (isLeaf(cursor) == false) {
+
+		// If this entry is a zero flag then follow it, otherwise move to the
+		// next entry.
 		if (isZeroFlag(cursor)) {
-			cursor->skip = getNextOneSkip(cursor);
+			cursorMove(cursor, (uint32_t)getValue(cursor));
+			if (EXCEPTION_FAILED) return true;
 		}
 		else {
-			cursor->skip = getOneSkip(cursor);
+			cursorMove(cursor, cursor->index + 1);
+			if (EXCEPTION_FAILED) return true;
 		}
 	}
 
-	// Decrease the skip counter and if the current node needs to be updated 
-	// move to it. This involves moving to the next node if the current node is
-	// the zero leaf, and then using the value of that node as the index of the
-	// next one node.
-	cursor->skip--;
-	if (cursor->skip == 0)
-	{
-		if (isZeroFlag(cursor)) {
-			cursorMove(cursor, cursor->recordIndex + 1);
-		}
-		cursorMove(cursor, (uint32_t)getValue(cursor));
+	return true;
+}
+
+// Compares the current variable bits to the bits in the IP address. Returns
+// If the next bits in the IP address;
+// -1 = are lower then -1 is returned. The caller needs to move to the lower
+// record.
+// 0 = match then 0 is returned. The caller needs to move to the equals to
+// record.
+// 1 = are greater then 1 is returned. The caller needs to move to the previous
+// record, take the equals to route, and continue down the lower records until
+// the lowest leaf is found.
+static int compareToVariable(Cursor* cursor) {
+	byte ipBitIndex = cursor->bitIndex;
+
+	// Record the initial index as we might need to return to this later.
+	uint32_t initial = cursor->index;
+
+	// If this is a zero flag then we'll need to move to the next record for
+	// comparison.
+	if (isZeroFlag(cursor)) {
+		cursorMove(cursor, cursor->index++);
 	}
 
-	// Completed processing the selected one bit. Return false as no profile
-	// index is yet found.
-	cursor->bitIndex++;
-	return false;
+	for (byte i = 0; i < cursor->variable.length; i++) {
+
+		// Get the bit from the IP address.
+		bool ipBit = getIpBitForIndex(cursor, ipBitIndex);
+
+		// Get the bit from the variable.
+		bool varBit = getVariableBitForIndex(cursor, i);
+
+		// If the bits are not equal return -1 or 1.
+		if (ipBit != varBit)
+		{
+			return ipBit == false ? -1 : 1;
+		}
+	}
+
+	// All the bits are equal return 0.
+	return 0;
 }
 
 // Evaluates the cursor until a leaf is found and then returns the profile
 // index.
 static uint32_t evaluate(Cursor* cursor) {
+	Exception* exception = cursor->ex;
 	bool found = false;
 	traceNewLine(cursor);
 	cursorMove(cursor, cursor->graph->info->graphIndex);
 	do
 	{
-		if (isBitSet(cursor)) {
-			TRACE_ITERATION(cursor, 1);
-			found = selectOne(cursor);
-		}
-		else {
-			TRACE_ITERATION(cursor, 0);
-			found = selectZero(cursor);
+		// Record the previous index as this might be needed should be bits
+		// found be greater than the next entry.
+		cursor->previous = cursor->index;
+
+		int result = compareToVariable(cursor);
+		TRACE_ITERATION(cursor, result);
+		switch (result) {
+		case -1:
+			found = selectLower(cursor);
+			if (EXCEPTION_FAILED) return 0;
+			break;
+		case 0:
+			found = selectMatched(cursor);
+			if (EXCEPTION_FAILED) return 0;
+			break;
+		case 1:
+			found = selectHigher(cursor);
+			if (EXCEPTION_FAILED) return 0;
+			break;
 		}
 	} while (found == false && isExhausted(cursor) == false);
 	return getProfileIndex(cursor);
@@ -506,6 +644,7 @@ static uint32_t ipiGraphEvaluate(
 			componentId == graph->info->componentId) {
 			Cursor cursor = cursorCreate(graph, address, sb, exception);
 			profileIndex = evaluate(&cursor);
+			if (EXCEPTION_FAILED) return 0;
 			traceResult(&cursor, profileIndex);
 			break;
 		}
@@ -513,10 +652,15 @@ static uint32_t ipiGraphEvaluate(
 	return profileIndex;
 }
 
+// Graph headers might be duplicated across different graphs. As such the 
+// reader passed may not be at the first byte of the graph being created. The
+// current reader position is therefore modified to that of the header and then
+// reset after the operation.
 static Collection* ipiGraphCreateFromFile(
 	CollectionHeader header,
 	void* state) {
 	FileCollection* s = (FileCollection*)state;
+	// TODO Apply the same logic to the file reader as the memory reader.
 	return CollectionCreateFromFile(
 		s->file,
 		s->reader,
@@ -558,7 +702,8 @@ static IpiCgArray* ipiGraphCreate(
 	}
 
 	for (uint32_t i = 0; i < count; i++) {
-		graphs->items[i].collection = NULL;
+		graphs->items[i].values = NULL;
+		graphs->items[i].variables = NULL;
 
 		// Get the information from the collection provided.
 		DataReset(&graphs->items[i].itemInfo.data);
@@ -573,16 +718,36 @@ static IpiCgArray* ipiGraphCreate(
 		}
 		graphs->count++;
 
-		// Create a collection for the graph.
-		// TODO create collections that support 64 bit sizes.
-		CollectionHeader header;
-		header.count = 0;
-		header.length = (uint32_t)graphs->items[i].info->graphLength;
-		header.startPosition = (uint32_t)graphs->items[i].info->graphStartPosition;
-		graphs->items[i].collection = collectionCreate(
-			header,
+		// Create the collection for the values that form the graph.
+		CollectionHeader headerValues;
+
+		// Must be zero as the count is not measured in bytes.
+		headerValues.count = 0; 
+		headerValues.length = 
+			graphs->items[i].info->value.collection.length;
+		headerValues.startPosition = 
+			graphs->items[i].info->value.collection.startPosition;
+		graphs->items[i].values = collectionCreate(
+			headerValues,
 			state);
-		if (graphs->items[i].collection == NULL) {
+		if (graphs->items[i].values == NULL) {
+			EXCEPTION_SET(CORRUPT_DATA);
+			fiftyoneDegreesIpiGraphFree(graphs);
+			return NULL;
+		}
+
+		// Create the collection for the variables that are used to evaluate
+		// the result of each value record.
+		CollectionHeader headerVariables;
+		headerVariables.count = graphs->items[i].info->variable.count;
+		headerVariables.length =
+			graphs->items[i].info->variable.length;
+		headerVariables.startPosition =
+			graphs->items[i].info->variable.startPosition;
+		graphs->items[i].variables = collectionCreate(
+			headerVariables,
+			state);
+		if (graphs->items[i].variables == NULL) {
 			EXCEPTION_SET(CORRUPT_DATA);
 			fiftyoneDegreesIpiGraphFree(graphs);
 			return NULL;
@@ -594,9 +759,10 @@ static IpiCgArray* ipiGraphCreate(
 
 void fiftyoneDegreesIpiGraphFree(fiftyoneDegreesIpiCgArray* graphs) {
 	for (uint32_t i = 0; i < graphs->count; i++) {
-		FIFTYONE_DEGREES_COLLECTION_FREE(graphs->items[i].collection);
 		graphs->items[i].itemInfo.collection->release(
 			&graphs->items[i].itemInfo);
+		FIFTYONE_DEGREES_COLLECTION_FREE(graphs->items[i].values);
+		FIFTYONE_DEGREES_COLLECTION_FREE(graphs->items[i].variables);
 	}
 	Free(graphs);
 }

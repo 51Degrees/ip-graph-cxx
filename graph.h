@@ -66,11 +66,33 @@
  */
 #pragma pack(push, 1)
 typedef struct fiftyone_degrees_ipi_cg_member_t {
-	uint64_t mask; /**< Mask applied to a node record to obtain the members
-				   bits */
+	uint64_t mask; /**< Mask applied to a record to obtain the members bits */
 	uint64_t shift; /**< Left shift to apply to the result of the mask to
 				    obtain the value */
 } fiftyoneDegreesIpiCgMember;
+#pragma pack(pop)
+
+/**
+ * Collection header information for graph collections.
+ */
+#pragma pack(push, 1)
+typedef struct fiftyone_degrees_ipi_cg_member_collection_t {
+	uint32_t length; /**< Number of bytes that form the collection */
+	uint32_t count; /**< Number of bit packed records in the collection */
+	uint32_t startPosition; /**< Position of the first collection byte */
+} fiftyoneDegreesIpiCgMemberCollection;
+#pragma pack(pop)
+
+/**
+ * Data structure used for the values collection.
+ */
+#pragma pack(push, 1)
+typedef struct fiftyone_degrees_ipi_cg_member_value_t {
+	fiftyoneDegreesIpiCgMemberCollection collection;
+	uint16_t recordSize; /**< Number of bits that for the value record */
+	fiftyoneDegreesIpiCgMember zeroFlag; /**< Bit for the zero flag */
+	fiftyoneDegreesIpiCgMember value; /**< Bits for the value */
+} fiftyoneDegreesIpiCgMemberValue;
 #pragma pack(pop)
 
 /**
@@ -80,25 +102,17 @@ typedef struct fiftyone_degrees_ipi_cg_member_t {
  */
 #pragma pack(push, 1)
 typedef struct fiftyone_degrees_ipi_cg_info_t {
-	uint64_t graphLength; /**< Number of bytes that form the complete graph */
-	uint32_t graphCount; /**< Number of records in the graph array */
-	uint64_t graphStartPosition; /**< Position of the first byte of the graph */
 	byte version; /**< IP address version (4 or 6). The reason byte is used
 				  instead of fiftyoneDegreesIpEvidenceType, is that enum is not
 			      necessarily a fixed size, so the struct may not always map to
 				  the data file. The value can still be cast to the enum type
 				  fiftyoneDegreesIpEvidenceType */
 	byte componentId; /**< The component id the graph relates to. */
-	byte recordSize; /**< The number of bits per fixed width node. Never more
-					 than 64 bits. */
-	uint64_t graphIndex; /**< The index to the entry record in the header data 
+	
+	uint32_t graphIndex; /**< The index to the entry record in the header data
 						 structure for the graph. */
-	fiftyoneDegreesIpiCgMember zeroFlag; /**< Single bit to indicate if the node
-									     is zero leaf */
-	fiftyoneDegreesIpiCgMember zeroSkip; /**< Bits used to obtain the zero skip */
-	fiftyoneDegreesIpiCgMember oneSkip; /**< Bits used to obtain the one skip */
-	fiftyoneDegreesIpiCgMember value; /**< Bits used to obtain node positive
-									  value for next node or profile */
+	fiftyoneDegreesIpiCgMemberCollection variable;
+	fiftyoneDegreesIpiCgMemberValue value;
 } fiftyoneDegreesIpiCgInfo;
 #pragma pack(pop)
 
@@ -108,7 +122,8 @@ typedef struct fiftyone_degrees_ipi_cg_info_t {
  */
 typedef struct fiftyone_degrees_ipi_cg_t {
 	fiftyoneDegreesIpiCgInfo* info;
-	fiftyoneDegreesCollection* collection;
+	fiftyoneDegreesCollection* values; /**< Values collection */
+	fiftyoneDegreesCollection* variables; /**< Variables collection */
 	fiftyoneDegreesCollectionItem itemInfo; /**< Handle for info */
 } fiftyoneDegreesIpiCg;
 
