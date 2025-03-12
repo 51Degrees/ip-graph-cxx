@@ -65,7 +65,8 @@ typedef Collection*(*collectionCreate)(CollectionHeader header, void* state);
 // Structure for the variables.
 #pragma pack(push, 1)
 typedef struct variable_t {
-	uint32_t startIndex; // Start index in the values collection.
+	uint32_t startIndex; // Inclusive start index in the values collection.
+	uint32_t endIndex; // Inclusive end index in the values collection.
 	byte length; // Number of bits from high to low to compare
 	union {
 		uint64_t value;  // Bits for the variable
@@ -85,6 +86,11 @@ typedef struct cursor_t {
 	uint32_t index; // The current index in the graph values collection
 	uint32_t previous; // The previous index in the graph values collection
 	Variable variable; // The current variable that relates to the record index
+	byte variableLength; // The length of the variable with the high/low flag 
+						 // removed
+	byte variableHighFlag; // True if the high bit of the length field is set
+	int compareResult; // Result of comparing the current bits to the variable
+					   // value
 	StringBuilder* sb; // String builder used for trace information
 	Item item; // Data for the current item in the graph
 } Cursor;
@@ -92,15 +98,12 @@ typedef struct cursor_t {
 #ifdef FIFTYONE_DEGREES_IPI_GRAPH_TRACE
 #define TRACE_BOOL(c,m,v) traceBool(c,m,v);
 #define TRACE_INT(c,m,v) traceInt(c,m,v);
-#define TRACE_ITERATION(c,b) traceIteration(c,b);
+#define TRACE_ITERATION(c) traceIteration(c);
 #else
 #define TRACE_BOOL(c,m,v)
 #define TRACE_INT(c,m,v)
 #define TRACE_ITERATION(c,b)
 #endif
-
-// Forward declaration.
-static uint32_t getValue(Cursor* cursor);
 
 static void traceNewLine(Cursor* cursor) {
 	StringBuilderAddChar(cursor->sb, '\r');
@@ -133,17 +136,33 @@ static void traceInt(Cursor* cursor, const char* method, int64_t value) {
 	traceNewLine(cursor);
 }
 
-static void traceIteration(Cursor* cursor, bool bit) {
+#define CI "CI:" // Cursor Index
+#define VS "VS:" // Variable Start index
+#define VE "VE:" // Variable End index
+#define VL "VL:" // Variable Length
+#define VH "VH:" // Variable High flag
+static void traceIteration(Cursor* cursor) {
 	StringBuilderAddChar(cursor->sb, '[');
 	StringBuilderAddInteger(cursor->sb, cursor->bitIndex);
 	StringBuilderAddChar(cursor->sb, ']');
 	StringBuilderAddChar(cursor->sb, '=');
-	StringBuilderAddChar(cursor->sb, bit ? '1' : '0');
+	StringBuilderAddInteger(cursor->sb, cursor->compareResult);
 	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddChars(cursor->sb, VS, sizeof(VS) - 1);
+	StringBuilderAddInteger(cursor->sb, cursor->variable.startIndex);
+	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddChars(cursor->sb, CI, sizeof(CI) - 1);
 	StringBuilderAddInteger(cursor->sb, cursor->index);
 	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddChars(cursor->sb, VE, sizeof(VE) - 1);
+	StringBuilderAddInteger(cursor->sb, cursor->variable.endIndex);
+	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddChars(cursor->sb, VL, sizeof(VL) - 1);
+	StringBuilderAddInteger(cursor->sb, cursor->variableLength);
+	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddChars(cursor->sb, VH, sizeof(VH) - 1);
+	StringBuilderAddInteger(cursor->sb, cursor->variableHighFlag);
 	traceNewLine(cursor);
-	getValue(cursor);
 }
 
 #define RESULT "result"
@@ -198,18 +217,77 @@ static bool getVariableBitForIndex(Cursor* cursor, byte varBitIndex) {
 // Comparer used to determine if the selected variable is higher or lower than
 // the target.
 static int setVariableComparer(
-	void* state,
+	Cursor* cursor,
 	Item* item,
 	long curIndex,
 	Exception* exception) {
 	Variable* variable = (Variable*)item->data.ptr;
-	Cursor* cursor = (Cursor*)state;
-	
+
 	// Store a copy of the variable in the cursor to avoid needing to fetch it
-	// again should it prove to be the correct result.
+	// again should it prove to be the required result.
 	cursor->variable = *variable;
-	
+
+	// If this variable is within the require range then its the correct one
+	// to return.
+	if (cursor->index >= variable->startIndex &&
+		cursor->index <= variable->endIndex) {
+		return 0;
+	}
+
 	return variable->startIndex - cursor->index;
+}
+
+static uint32_t setVariableSearch(
+	fiftyoneDegreesCollection* collection,
+	fiftyoneDegreesCollectionItem* item,
+	uint32_t lowerIndex,
+	uint32_t upperIndex,
+	Cursor* cursor,
+	fiftyoneDegreesException* exception) {
+	uint32_t upper = upperIndex,
+		lower = lowerIndex,
+		middle = 0;
+	int comparisonResult;
+	DataReset(&item->data);
+	while (lower <= upper) {
+
+		// Get the middle index for the next item to be compared.
+		middle = lower + (upper - lower) / 2;
+
+		// Get the item from the collection checking for NULL or an error.
+		if (collection->get(collection, middle, item, exception) == NULL ||
+			EXCEPTION_OKAY == false) {
+			return 0;
+		}
+
+		// Perform the binary search using the comparer provided with the item
+		// just returned.
+		comparisonResult = setVariableComparer(cursor, item, middle, exception);
+		if (EXCEPTION_OKAY == false) {
+			return 0;
+		}
+
+		if (comparisonResult == 0) {
+			return middle;
+		}
+		else if (comparisonResult > 0) {
+			if (middle) { // guard against underflow of unsigned type
+				upper = middle - 1;
+			}
+			else {
+				lower += 1; // break once iteration finishes
+			}
+		}
+		else {
+			lower = middle + 1;
+		}
+
+		COLLECTION_RELEASE(collection, item);
+	}
+
+	// The item could not be found so return the index of the variable that
+	// covers the range required.
+	return middle;
 }
 
 // Sets the cursor variable to the correct settings for the current value 
@@ -220,37 +298,36 @@ static void setVariable(Cursor* cursor) {
 	// Use binary search to find the index for the variable. The comparer 
 	// records the last variable checked the cursor will have the correct
 	// variable after the search operation.
-	uint32_t index = CollectionBinarySearch(
+	uint32_t index = setVariableSearch(
 		cursor->graph->variables,
 		&cursor->item,
 		0,
-		cursor->graph->variables->count - 1,
-		(void*)cursor,
-		setVariableComparer,
+		cursor->graph->variablesCount - 1,
+		cursor,
 		cursor->ex);
 
-	// Validate that the variable set has a start index equal to or grater than
-	// the one required.
-	if (cursor->variable.startIndex < cursor->index) {
+	// Validate that the variable set has a start index equal to or greater
+	// than the current cursor position.
+	if (cursor->index < cursor->variable.startIndex) {
+		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
+		return;
+	}
+	if (cursor->index > cursor->variable.endIndex) {
 		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
 		return;
 	}
 
-	// Validate that the next variable has a higher start index than the one
-	// found. If not then set an exception as the data structure has become
-	// corrupt.
-	if (index < CollectionGetCount(cursor->graph->variables)) {
-		Variable next = *(Variable*)cursor->graph->variables->get(
-			cursor->graph->variables,
-			index + 1,
-			&cursor->item,
-			cursor->ex);
-		COLLECTION_RELEASE(cursor->graph->variables, &cursor->item);
-		if (cursor->index > next.startIndex) {
-			EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
-			return;
-		}
+	// Validate that the index returned is less than the number of entries in
+	// the graph collection.
+	if (index >= cursor->graph->variablesCount) {
+		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
+		return;
 	}
+
+	// Split the variable.length byte to form the variable length and high
+	// flag.
+	cursor->variableLength = cursor->variable.length & 0x7F;
+	cursor->variableHighFlag = (cursor->variable.length & 0x80) >> 7;
 }
 
 /*
@@ -374,7 +451,6 @@ static uint32_t getValue(Cursor* cursor) {
 	uint32_t result = getMemberValue(
 		cursor->graph->info->value.value, 
 		cursor->current);
-	TRACE_INT(cursor, "getValue", result);
 	return result;
 }
 
@@ -403,67 +479,68 @@ static bool isLeaf(Cursor* cursor) {
 	return result;
 }
 
-// True if the cursor value has the zero flag set, otherwise false.
-static bool isZeroFlag(Cursor* cursor) {
+// True if the cursor value has the unequal flag set, otherwise false.
+static bool isUnequalFlag(Cursor* cursor) {
 	bool result = getMemberValue(
-		cursor->graph->info->value.zeroFlag, 
+		cursor->graph->info->value.unequalFlag, 
 		cursor->current) != 0;
-	TRACE_BOOL(cursor, "isZeroFlag", result);
+	TRACE_BOOL(cursor, "isUnequalFlag", result);
 	return result;
 }
 
-// True if the cursor value is a zero leaf.
-static bool isZeroLeaf(Cursor* cursor) {
-	bool result = isZeroFlag(cursor) && isLeaf(cursor);
-	TRACE_BOOL(cursor, "isZeroLeaf", result);
+// True if the cursor value is a an unequal leaf.
+static bool isUnequalLeaf(Cursor* cursor) {
+	bool result = isUnequalFlag(cursor) && isLeaf(cursor);
+	TRACE_BOOL(cursor, "isUnequalLeaf", result);
 	return result;
 }
 
-// True if the cursor value is a one leaf.
-static bool isOneLeaf(Cursor* cursor) {
-	bool result = isZeroFlag(cursor) == false && isLeaf(cursor);
-	TRACE_BOOL(cursor,"isOneLeaf", result);
+// True if the cursor value is an equal leaf.
+static bool isEqualToLeaf(Cursor* cursor) {
+	bool result = isUnequalFlag(cursor) == false && isLeaf(cursor);
+	TRACE_BOOL(cursor, "isEqualToLeaf", result);
 	return result;
 }
 
-// True if the next index is a one leaf.
-static bool isNextOneLeaf(Cursor* cursor) {
+// True if the next index is an equal leaf.
+static bool isNextEqualToLeaf(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	bool result = false;
 	uint64_t current = cursor->current;
 	cursorMove(cursor, cursor->index + 1);
 	if (EXCEPTION_FAILED) return false;
-	result = isOneLeaf(cursor);
+	result = isEqualToLeaf(cursor);
 	cursor->index--;
 	cursor->current = current;
-	TRACE_BOOL(cursor,"isNextOneLeaf", result);
+	TRACE_BOOL(cursor,"isNextEqualToLeaf", result);
 	return result;
 }
 
 /// <summary>
-/// Moves the cursor for a lower entry.
+/// Moves the cursor for an unequal result.
 /// </summary>
 /// <returns>
 /// True if a leaf has been found and getProfileIndex can be used to return a 
 /// result.
 /// </returns>
-static bool selectLower(Cursor* cursor) {
+static bool selectUnequal(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 
-	// Check the current entry to see if it is a zero leaf.
-	if (isZeroLeaf(cursor)) {
+	// Check the current entry to see if it is an unequal leaf. If so then the
+	// result has been found.
+	if (isUnequalLeaf(cursor)) {
 		return true;
 	}
 
-	if (isZeroFlag(cursor)) {
-		// If the zero flag is set then the next zero entry is not the next
-		// consecutive entry but the index that this now points to.
+	if (isUnequalFlag(cursor)) {
+		// If the unequal flag is set then the next entry is no longer the next
+		// consecutive entry but the index that needs to be moved to. This
+		// happens due to deduplication.
 		cursorMove(cursor, (uint32_t)getValue(cursor));
 		if (EXCEPTION_FAILED) return false;
 	}
 	else {
-		// If the zero flag is not set then the next zero entry is the next
-		// entry in the collection.
+		// If equal then the following entry is the one to move to.
 		cursorMove(cursor, cursor->index + 1);
 		if (EXCEPTION_FAILED) return false;
 	}
@@ -473,38 +550,37 @@ static bool selectLower(Cursor* cursor) {
 }
 
 /// <summary>
-/// Moves the cursor for an equals.
+/// Moves the cursor for an equals entry.
 /// </summary>
 /// <returns>
 /// True if a leaf has been found and getProfileIndex can be used to return a 
 /// result.
 /// </returns>
-static bool selectMatched(Cursor* cursor) {
+static bool selectEqual(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 
-	// Check the current entry to see if it is a matched leaf.
-	if (isOneLeaf(cursor)) {
+	// Check the current entry to see if it is an equal leaf.
+	if (isEqualToLeaf(cursor)) {
 		return true;
 	}
 
 	// An additional check is needed for the data structure as the current
-	// entry might relate to the lower entry. If this is the case then the next
-	// entry that might contain the equal leaf.
-	if (isZeroFlag(cursor) && isNextOneLeaf(cursor)) {
+	// entry might relate to the unequal entry. If this is the case then the 
+	// next is the one that might contain an equal leaf.
+	if (isUnequalFlag(cursor) && isNextEqualToLeaf(cursor)) {
 		cursorMove(cursor, cursor->index + 1);
 		if (EXCEPTION_FAILED) return false;
 		return true;
 	}
 
-	// No leaf has been found so move the cursor to the next record.
-	// Check to see if the lower flag is set meaning the entry needs to be
+	// Check to see if the unequal flag is set meaning the entry needs to be
 	// skipped over.
-	if (isZeroFlag(cursor)) {
+	if (isUnequalFlag(cursor)) {
 		cursorMove(cursor, cursor->index + 1);
 		if (EXCEPTION_FAILED) return false;
 	}
 
-	// Move to the matched entry indicated.
+	// Move the cursor to the next record using the current entry. 
 	cursorMove(cursor, (uint32_t)getValue(cursor));
 	if (EXCEPTION_FAILED) return false;
 
@@ -521,16 +597,16 @@ static bool selectMatched(Cursor* cursor) {
 /// True if a leaf has been found and getProfileIndex can be used to return a 
 /// result.
 /// </returns>
-static bool selectHigher(Cursor* cursor) {
+static bool selectComplete(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 
 	// Move back to the previous entry.
 	cursorMove(cursor, cursor->previous);
 	if (EXCEPTION_FAILED) return true;
 
-	// Check for the lower flag and if present move to the next entry which 
+	// Check for the unequal flag and if present move to the next entry which 
 	// will be for equals.
-	if (isZeroFlag(cursor)) {
+	if (isUnequalFlag(cursor)) {
 		cursorMove(cursor, cursor->index + 1);
 		if (EXCEPTION_FAILED) return true;
 	}
@@ -539,12 +615,12 @@ static bool selectHigher(Cursor* cursor) {
 	cursorMove(cursor, (uint32_t)getValue(cursor));
 	if (EXCEPTION_FAILED) return true;
 
-	// Follow the lower entries until a leaf is found.
+	// Follow the unequal entries until a leaf is found.
 	while (isLeaf(cursor) == false) {
 
-		// If this entry is a zero flag then follow it, otherwise move to the
+		// If this entry is a not flag then follow it, otherwise move to the
 		// next entry.
-		if (isZeroFlag(cursor)) {
+		if (isUnequalFlag(cursor)) {
 			cursorMove(cursor, (uint32_t)getValue(cursor));
 			if (EXCEPTION_FAILED) return true;
 		}
@@ -557,39 +633,29 @@ static bool selectHigher(Cursor* cursor) {
 	return true;
 }
 
-// Compares the current variable bits to the bits in the IP address. Returns
-// If the next bits in the IP address;
-// -1 = are lower then -1 is returned. The caller needs to move to the lower
-// record.
-// 0 = match then 0 is returned. The caller needs to move to the equals to
-// record.
-// 1 = are greater then 1 is returned. The caller needs to move to the previous
-// record, take the equals to route, and continue down the lower records until
-// the lowest leaf is found.
+// Compares the current variable bits to the bits in the IP address. Returns 0
+// if equal, -1 if lower, and 1 if higher.
 static int compareToVariable(Cursor* cursor) {
-	byte ipBitIndex = cursor->bitIndex;
-
-	// Record the initial index as we might need to return to this later.
-	uint32_t initial = cursor->index;
-
-	// If this is a zero flag then we'll need to move to the next record for
-	// comparison.
-	if (isZeroFlag(cursor)) {
-		cursorMove(cursor, cursor->index++);
-	}
-
-	for (byte i = 0; i < cursor->variable.length; i++) {
+	for (byte v = 0, i = cursor->bitIndex; 
+		v < cursor->variableLength;
+		v++, i++) {
 
 		// Get the bit from the IP address.
-		bool ipBit = getIpBitForIndex(cursor, ipBitIndex);
+		bool ipBit = getIpBitForIndex(cursor, i);
 
 		// Get the bit from the variable.
-		bool varBit = getVariableBitForIndex(cursor, i);
+		bool varBit = getVariableBitForIndex(cursor, v);
 
-		// If the bits are not equal return -1 or 1.
+		// If the bits are not equal return -1 if the IP bit is lower the
+		// variable bit, or 1 if the IP bit is higher.
 		if (ipBit != varBit)
 		{
-			return ipBit == false ? -1 : 1;
+			if (varBit == true && ipBit == false) {
+				return -1;
+			}
+			else {
+				return 1;
+			}
 		}
 	}
 
@@ -606,27 +672,48 @@ static uint32_t evaluate(Cursor* cursor) {
 	cursorMove(cursor, cursor->graph->info->graphIndex);
 	do
 	{
-		// Record the previous index as this might be needed should be bits
-		// found be greater than the next entry.
+		// Record the previous index as this might be needed to find the leaf
+		// in the selectComplete method.
 		cursor->previous = cursor->index;
 
-		int result = compareToVariable(cursor);
-		TRACE_ITERATION(cursor, result);
-		switch (result) {
-		case -1:
-			found = selectLower(cursor);
-			if (EXCEPTION_FAILED) return 0;
-			break;
-		case 0:
-			found = selectMatched(cursor);
-			if (EXCEPTION_FAILED) return 0;
-			break;
-		case 1:
-			found = selectHigher(cursor);
-			if (EXCEPTION_FAILED) return 0;
-			break;
+		cursor->compareResult = compareToVariable(cursor);
+		TRACE_ITERATION(cursor);
+		if (cursor->variableHighFlag) {
+			switch (cursor->compareResult) {
+			case -1:
+				found = selectComplete(cursor);
+				if (EXCEPTION_FAILED) return 0;
+				break;
+			case 0:
+				found = selectEqual(cursor);
+				if (EXCEPTION_FAILED) return 0;
+				break;
+			case 1:
+				found = selectUnequal(cursor);
+				if (EXCEPTION_FAILED) return 0;
+				break;
+			}
 		}
-	} while (found == false && isExhausted(cursor) == false);
+		else {
+			switch (cursor->compareResult) {
+			case -1:
+				found = selectUnequal(cursor);
+				if (EXCEPTION_FAILED) return 0;
+				break;
+			case 0:
+				found = selectEqual(cursor);
+				if (EXCEPTION_FAILED) return 0;
+				break;
+			case 1:
+				found = selectComplete(cursor);
+				if (EXCEPTION_FAILED) return 0;
+				break;
+			}
+		}
+		if (found == false) {
+			cursor->bitIndex += cursor->variableLength;
+		}
+ 	} while (found == false && isExhausted(cursor) == false);
 	return getProfileIndex(cursor);
 }
 
@@ -752,6 +839,8 @@ static IpiCgArray* ipiGraphCreate(
 			fiftyoneDegreesIpiGraphFree(graphs);
 			return NULL;
 		}
+		graphs->items->variablesCount = CollectionGetCount(
+			graphs->items[i].variables);
 	}
 
 	return graphs;
