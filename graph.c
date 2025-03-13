@@ -685,8 +685,13 @@ static uint32_t evaluate(Cursor* cursor) {
 		// in the selectComplete method.
 		cursor->previous = cursor->index;
 
+		// Compare the current cursor bits against the variable value.
 		cursor->compareResult = compareToVariable(cursor);
 		TRACE_ITERATION(cursor);
+
+		// Advance the bits before the variable is then changed.
+		cursor->bitIndex += cursor->variableLength;
+
 		if (cursor->variableHighFlag) {
 			switch (cursor->compareResult) {
 			case -1:
@@ -724,9 +729,6 @@ static uint32_t evaluate(Cursor* cursor) {
 				if (EXCEPTION_FAILED) return 0;
 				break;
 			}
-		}
-		if (found == false) {
-			cursor->bitIndex += cursor->variableLength;
 		}
  	} while (found == false && isExhausted(cursor) == false);
 	return getProfileIndex(cursor);
