@@ -295,6 +295,12 @@ static uint32_t setVariableSearch(
 static void setVariable(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 
+	// Check that the current variable is valid and only move if not.
+	if (cursor->index >= cursor->variable.startIndex &&
+		cursor->index <= cursor->variable.endIndex) {
+		return;
+	}
+
 	// Use binary search to find the index for the variable. The comparer 
 	// records the last variable checked the cursor will have the correct
 	// variable after the search operation.
@@ -669,7 +675,10 @@ static uint32_t evaluate(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	bool found = false;
 	traceNewLine(cursor);
+
+	// Move the cursor to the entry record for the graph.
 	cursorMove(cursor, cursor->graph->info->graphIndex);
+
 	do
 	{
 		// Record the previous index as this might be needed to find the leaf
@@ -682,14 +691,17 @@ static uint32_t evaluate(Cursor* cursor) {
 			switch (cursor->compareResult) {
 			case -1:
 				found = selectComplete(cursor);
+				TRACE_BOOL(cursor, "selectComplete", found);
 				if (EXCEPTION_FAILED) return 0;
 				break;
 			case 0:
 				found = selectEqual(cursor);
+				TRACE_BOOL(cursor, "selectEqual", found);
 				if (EXCEPTION_FAILED) return 0;
 				break;
 			case 1:
 				found = selectUnequal(cursor);
+				TRACE_BOOL(cursor, "selectUnequal", found);
 				if (EXCEPTION_FAILED) return 0;
 				break;
 			}
@@ -698,14 +710,17 @@ static uint32_t evaluate(Cursor* cursor) {
 			switch (cursor->compareResult) {
 			case -1:
 				found = selectUnequal(cursor);
+				TRACE_BOOL(cursor, "selectUnequal", found);
 				if (EXCEPTION_FAILED) return 0;
 				break;
 			case 0:
 				found = selectEqual(cursor);
+				TRACE_BOOL(cursor, "selectEqual", found);
 				if (EXCEPTION_FAILED) return 0;
 				break;
 			case 1:
 				found = selectComplete(cursor);
+				TRACE_BOOL(cursor, "selectComplete", found);
 				if (EXCEPTION_FAILED) return 0;
 				break;
 			}
