@@ -34,21 +34,6 @@ MAP_TYPE(IpiCgMemberValue)
 MAP_TYPE(Collection)
 
 /**
- * MASKS TO OBTAIN BITS FROM IP ADDRESS
- */
-
-byte masks[8] = {
-	1ULL,
-	1ULL << 1,
-	1ULL << 2,
-	1ULL << 3,
-	1ULL << 4,
-	1ULL << 5,
-	1ULL << 6,
-	1ULL << 7
-};
-
-/**
  * RESULTS FROM COMPARE OPERATIONS - THE IP ADDRESS SEGMENT IS;
  */
 typedef enum {
@@ -79,12 +64,12 @@ typedef struct variable_t {
 	uint32_t endIndex; // Inclusive end index in the values collection.
 	byte length; // Length of the equal and limit members
 	union {
-		uint32_t equal; // Bits for the equal variable
-		byte equalBytes[sizeof(uint32_t)]; // Array of 8 bytes
+		uint32_t comparator; // Bits for the equal variable
+		byte comparatorBytes[sizeof(uint32_t)]; // Array of 4 bytes
 	};
 	union {
 		uint32_t limit; // Bits for the limit variable
-		byte limitBytes[sizeof(uint32_t)]; // Array of 8 bytes
+		byte limitBytes[sizeof(uint32_t)]; // Array of 4 bytes
 	};
 } Variable;
 #pragma pack(pop)
@@ -98,7 +83,8 @@ typedef struct cursor_t {
 				   // value array
 	uint64_t current; // The value of the current item in the graph
 	uint32_t index; // The current index in the graph values collection
-	uint32_t lastIndex; // The previous index in the graph values collection
+	uint32_t currentBranchIndex; // The index of the current branch
+	uint32_t previousBranchIndex; // The index of the previous branch
 	Variable variable; // The current variable that relates to the record index
 	byte variableHighFlag; // True if the high bit of the length field is set
 	CompareResult compareResult; // Result of comparing the current bits to the
@@ -111,17 +97,11 @@ typedef struct cursor_t {
 #ifdef FIFTYONE_DEGREES_IPI_GRAPH_TRACE
 #define TRACE_BOOL(c,m,v) traceBool(c,m,v);
 #define TRACE_INT(c,m,v) traceInt(c,m,v);
-#define TRACE_SET_VARIABLE(c) traceSetVariable(c);
-#define TRACE_ITERATION(c) traceIteration(c);
+#define TRACE_COMPARE(c) traceCompare(c);
 #define TRACE_LABEL(c,m) traceLabel(c,m);
-#define TRACE_IP(c,m) traceIp(c,m);
+#define TRACE_RESULT(c,r) traceResult(c,r);
 #else
-#define TRACE_BOOL(c,m,v)
-#define TRACE_INT(c,m,v)
-#define TRACE_SET_VARIABLE(c,m)
-#define TRACE_ITERATION(c,b)
-#define TRACE_LABEL(c,m)
-#define TRACE_IP(c,m)
+// TODO
 #endif
 
 static void traceNewLine(Cursor* cursor) {
@@ -147,14 +127,6 @@ static void uintToBinary(Cursor* cursor, uint64_t number, int length) {
 			StringBuilderAddChar(cursor->sb, ' ');
 		}
 	}
-}
-
-static void traceIp(Cursor* cursor, const char* label) {
-	StringBuilderAddChar(cursor->sb, '\t');
-	StringBuilderAddChars(cursor->sb, label, strlen(label));
-	StringBuilderAddChar(cursor->sb, '=');
-	uintToBinary(cursor, cursor->ipValue, cursor->variable.length);
-	traceNewLine(cursor);
 }
 
 #define TRACE_TRUE "true"
@@ -183,43 +155,18 @@ static void traceInt(Cursor* cursor, const char* method, int64_t value) {
 	traceNewLine(cursor);
 }
 
-#define VS "VS:" // Variable Start index
-#define CI "CI:" // Cursor Index
-#define VE "VE:" // Variable End index
-#define VH "VH:" // Variable High flag
-#define EV "EV:" // Equal Value
-#define LV "LV:" // Limit Value
-#define LI "LI:" // Last Index
-static void traceSetVariable(Cursor* cursor) {
-	StringBuilderAddChar(cursor->sb, '\t');
-	StringBuilderAddChars(cursor->sb, VS, sizeof(VS) - 1);
-	StringBuilderAddInteger(cursor->sb, cursor->variable.startIndex);
-	StringBuilderAddChar(cursor->sb, ' ');
-	StringBuilderAddChars(cursor->sb, CI, sizeof(CI) - 1);
-	StringBuilderAddInteger(cursor->sb, cursor->index);
-	StringBuilderAddChar(cursor->sb, ' ');
-	StringBuilderAddChars(cursor->sb, VE, sizeof(VE) - 1);
-	StringBuilderAddInteger(cursor->sb, cursor->variable.endIndex);
-	StringBuilderAddChar(cursor->sb, ' ');
-	StringBuilderAddChars(cursor->sb, VH, sizeof(VH) - 1);
-	StringBuilderAddInteger(cursor->sb, cursor->variableHighFlag);
-	StringBuilderAddChar(cursor->sb, ' ');
-	StringBuilderAddChars(cursor->sb, EV, sizeof(EV) - 1);
-	uintToBinary(cursor, cursor->variable.equal, cursor->variable.length);
-	StringBuilderAddChar(cursor->sb, ' ');
-	StringBuilderAddChars(cursor->sb, LV, sizeof(LV) - 1);
-	uintToBinary(cursor, cursor->variable.limit, cursor->variable.length);
-	StringBuilderAddChar(cursor->sb, ' ');
-	StringBuilderAddChars(cursor->sb, LI, sizeof(LI) - 1);
-	StringBuilderAddInteger(cursor->sb, cursor->lastIndex);
-	traceNewLine(cursor);
-}
-
 #define NIB "NOT_INBETWEEN"
 #define IB "INBETWEEN"
 #define EQ "EQUAL"
 #define NEQ "NOT_EQUAL"
-static void traceIteration(Cursor* cursor) {
+#define IP "IP:" // IP value
+#define EV "EV:" // Equal Value
+#define LV "LV:" // Limit Value
+#define VS "VS:" // Variable Start index
+#define CI "CI:" // Cursor Index
+#define VE "VE:" // Variable End index
+#define VH "VH:" // Variable High flag
+static void traceCompare(Cursor* cursor) {
 	StringBuilderAddChar(cursor->sb, '[');
 	StringBuilderAddInteger(cursor->sb, cursor->bitIndex);
 	StringBuilderAddChar(cursor->sb, ']');
@@ -239,6 +186,27 @@ static void traceIteration(Cursor* cursor) {
 		StringBuilderAddChars(cursor->sb, NEQ, sizeof(NEQ) - 1);
 		break;
 	}
+	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddChars(cursor->sb, IP, sizeof(IP) - 1);
+	uintToBinary(cursor, cursor->ipValue, cursor->variable.length);
+	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddChars(cursor->sb, EV, sizeof(EV) - 1);
+	uintToBinary(cursor, cursor->variable.comparator, cursor->variable.length);
+	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddChars(cursor->sb, LV, sizeof(LV) - 1);
+	uintToBinary(cursor, cursor->variable.limit, cursor->variable.length);
+	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddChars(cursor->sb, VS, sizeof(VS) - 1);
+	StringBuilderAddInteger(cursor->sb, cursor->variable.startIndex);
+	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddChars(cursor->sb, CI, sizeof(CI) - 1);
+	StringBuilderAddInteger(cursor->sb, cursor->index);
+	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddChars(cursor->sb, VE, sizeof(VE) - 1);
+	StringBuilderAddInteger(cursor->sb, cursor->variable.endIndex);
+	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddChars(cursor->sb, VH, sizeof(VH) - 1);
+	StringBuilderAddInteger(cursor->sb, cursor->variableHighFlag);
 	traceNewLine(cursor);
 }
 
@@ -284,8 +252,6 @@ static void setIpValue(Cursor* cursor) {
 	}
 
 	cursor->ipValue = value;
-	TRACE_INT(cursor, "ip.bitindex", cursor->bitIndex);
-	TRACE_IP(cursor, "ip.value");
 }
 
 // True if all the bytes of the address have been consumed.
@@ -378,9 +344,6 @@ static void setVariable(Cursor* cursor) {
 	// Check that the current variable is valid and only move if not.
 	if (cursor->index >= cursor->variable.startIndex &&
 		cursor->index <= cursor->variable.endIndex) {
-
-		TRACE_SET_VARIABLE(cursor);
-
 		return;
 	}
 
@@ -414,9 +377,7 @@ static void setVariable(Cursor* cursor) {
 	}
 
 	// High flag is set if the limit is larger than the equal value
-	cursor->variableHighFlag = cursor->variable.limit > cursor->variable.equal;
-
-	TRACE_SET_VARIABLE(cursor);
+	cursor->variableHighFlag = cursor->variable.limit > cursor->variable.comparator;
 }
 
 // Extract the value as an integer from the bit packed record provided.
@@ -511,12 +472,10 @@ static bool isEqualFlag(Cursor* cursor) {
 // Moves the cursor to the index in the collection returning the value of the
 // record. Uses CgInfo.recordSize to convert the byte array of the record into
 // a 64 bit positive integer.
-static uint64_t cursorMove(Cursor* cursor, uint32_t recordIndex) {
+static void cursorMove(Cursor* cursor, uint32_t recordIndex) {
+	TRACE_INT(cursor, "cursorMove", recordIndex);
 
 	Exception* exception = cursor->ex;
-
-	// Record the last index.
-	cursor->lastIndex = cursor->index;
 
 	// Work out the byte index for the record index and the starting bit index
 	// within that byte.
@@ -532,7 +491,7 @@ static uint64_t cursorMove(Cursor* cursor, uint32_t recordIndex) {
 		(uint32_t)byteIndex,
 		&cursor->item,
 		cursor->ex);
-	if (EXCEPTION_FAILED) return 0;
+	if (EXCEPTION_FAILED) return;
 
 	// Set the record index.
 	cursor->index = recordIndex;
@@ -547,28 +506,29 @@ static uint64_t cursorMove(Cursor* cursor, uint32_t recordIndex) {
 	// Release the data. 
 	cursor->item.collection->release(&cursor->item);
 
-	// Then return the current cursor value.
-	return cursor->current;
+	// Set the correct variable to use for any compare operations.
+	setVariable(cursor);
+	if (EXCEPTION_FAILED) return;
 }
 
 // Moves the cursor to the entry before the last iteration.
-static uint64_t cursorMoveBack(Cursor* cursor) {
-	return cursorMove(cursor, cursor->lastIndex);
+static void cursorMoveBack(Cursor* cursor) {
+	cursorMove(cursor, cursor->previousBranchIndex);
 }
 
 // Moves the cursor to the next entry.
-static uint64_t cursorMoveNext(Cursor* cursor) {
-	return cursorMove(cursor, cursor->index + 1);
+static void cursorMoveNext(Cursor* cursor) {
+	cursorMove(cursor, cursor->index + 1);
 }
 
 // Moves the cursor to the previous entry.
-static uint64_t cursorMovePrevious(Cursor* cursor) {
-	return cursorMove(cursor, cursor->index - 1);
+static void cursorMovePrevious(Cursor* cursor) {
+	cursorMove(cursor, cursor->index - 1);
 }
 
 // Moves the cursor to the entry indicated by the current entry.
-static uint64_t cursorMoveTo(Cursor* cursor) {
-	return cursorMove(cursor, (uint32_t)getValue(cursor));
+static void cursorMoveTo(Cursor* cursor) {
+	cursorMove(cursor, (uint32_t)getValue(cursor));
 }
 
 // True if the next entry is an equal leaf.
@@ -666,7 +626,7 @@ static void cursorMoveHigh(Cursor* cursor) {
 
 		if (isLeaf(cursor) == false) {
 
-			// Follow the equal entry.
+			// Follow the high entry.
 			cursorMoveTo(cursor);
 			if (EXCEPTION_FAILED) return;
 		}
@@ -705,6 +665,7 @@ static bool selectUnequal(Cursor* cursor) {
 
 		// If a leaf then return, otherwise move to the entry indicated.
 		if (isLeaf(cursor)) {
+			TRACE_BOOL(cursor, "selectUnequal", true);
 			return true;
 		}
 		else {
@@ -721,6 +682,7 @@ static bool selectUnequal(Cursor* cursor) {
 	}
 
 	// Return false as no profile index is yet found.
+	TRACE_BOOL(cursor, "selectUnequal", false);
 	return false;
 }
 
@@ -744,6 +706,7 @@ static bool selectEqual(Cursor* cursor) {
 
 	// Check the current entry to see if it is an equal leaf.
 	if (isLeaf(cursor)) {
+		TRACE_BOOL(cursor, "selectEqual", true);
 		return true;
 	}
 
@@ -753,6 +716,7 @@ static bool selectEqual(Cursor* cursor) {
 
 	// Completed processing the selected equals entry. Return false as no 
 	// profile index is yet found.
+	TRACE_BOOL(cursor, "selectEqual", false);
 	return false;
 }
 
@@ -762,6 +726,7 @@ static bool selectEqual(Cursor* cursor) {
 /// </summary>
 static void selectCompleteHigh(Cursor* cursor) {
 	Exception* exception = cursor->ex;
+	TRACE_LABEL(cursor, "selectCompleteHigh");
 
 	// Move back to the previous entry.
 	cursorMoveBack(cursor);
@@ -773,10 +738,10 @@ static void selectCompleteHigh(Cursor* cursor) {
 	
 	// The cursor is now on the higher sibling. Process all the lower entries
 	// until a leaf is found.
-	do {
+	while (isLeaf(cursor) == false) {
 		cursorMoveLow(cursor);
 		if (EXCEPTION_FAILED) return;
-	} while (isLeaf(cursor) == false);
+	}
 }
 
 /// <summary>
@@ -784,6 +749,7 @@ static void selectCompleteHigh(Cursor* cursor) {
 /// </summary>
 static void selectCompleteEqualHigh(Cursor* cursor) {
 	Exception* exception = cursor->ex;
+	TRACE_LABEL(cursor, "selectCompleteEqualHigh");
 
 	// Move to the equal entry.
 	selectEqual(cursor);
@@ -801,6 +767,7 @@ static void selectCompleteEqualHigh(Cursor* cursor) {
 /// </summary>
 static void selectCompleteEqualLow(Cursor* cursor) {
 	Exception* exception = cursor->ex;
+	TRACE_LABEL(cursor, "selectCompleteEqualLow");
 
 	// Move to the equal entry.
 	selectEqual(cursor);
@@ -818,6 +785,7 @@ static void selectCompleteEqualLow(Cursor* cursor) {
 /// </summary>
 static void selectCompleteUnequalHigh(Cursor* cursor) {
 	Exception* exception = cursor->ex;
+	TRACE_LABEL(cursor, "selectCompleteUnequalHigh");
 
 	// Move to the unequal entry.
 	selectUnequal(cursor);
@@ -835,6 +803,7 @@ static void selectCompleteUnequalHigh(Cursor* cursor) {
 /// </summary>
 static void selectCompleteUnequalLow(Cursor* cursor) {
 	Exception* exception = cursor->ex;
+	TRACE_LABEL(cursor, "selectCompleteUnequalLow");
 
 	// Move to the unequal entry.
 	selectUnequal(cursor);
@@ -853,6 +822,7 @@ static void selectCompleteUnequalLow(Cursor* cursor) {
 /// </summary>
 static void selectCompleteLow(Cursor* cursor) {
 	Exception* exception = cursor->ex;
+	TRACE_LABEL(cursor, "selectCompleteLow");
 
 	// Move back to the previous entry.
 	cursorMoveBack(cursor);
@@ -865,7 +835,6 @@ static void selectCompleteLow(Cursor* cursor) {
 	// The cursor is now on the lower sibling. Process all the higher entries
 	// until a leaf is found.
 	while (isLeaf(cursor) == false) {
-
 		cursorMoveHigh(cursor);
 		if (EXCEPTION_FAILED) return;
 	}
@@ -874,43 +843,55 @@ static void selectCompleteLow(Cursor* cursor) {
 // Compares the current variable to the relevant bits in the IP address. The
 // comparison varies depending on whether the limit is lower or higher than the
 // equal variable.
-static CompareResult compareIpToVariable(Cursor* cursor) {
+static void compareIpToVariable(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 
-	// Set the correct variable to use for any compare operations.
-	setVariable(cursor);
-	if (EXCEPTION_FAILED) return 0;
+	// Update the indexes in case there is a need to return to the previous
+	// branch.
+	cursor->previousBranchIndex = cursor->currentBranchIndex;
+	cursor->currentBranchIndex = cursor->index;
 
 	// Set the cursor->ipValue to the required bits from the IP address for
 	// numeric comparison.
 	setIpValue(cursor); 
 
-	if (cursor->variableHighFlag == false) {
-		if (cursor->ipValue == cursor->variable.equal) {
-			return EQUAL;
-		}
-		if (cursor->ipValue > cursor->variable.limit &&
-			cursor->ipValue < cursor->variable.equal) {
-			return INBETWEEN;
-		}
-		if (cursor->ipValue <= cursor->variable.limit) {
-			return NOT_INBETWEEN;
-		}
-		return NOT_EQUAL;
+	if (cursor->ipValue == cursor->variable.comparator) {
+		cursor->compareResult = EQUAL;
 	}
 	else {
-		if (cursor->ipValue == cursor->variable.equal) {
-			return EQUAL;
+		if (cursor->variable.length == 1) {
+			cursor->compareResult = NOT_EQUAL;
 		}
-		if (cursor->ipValue < cursor->variable.equal) {
-			return NOT_EQUAL;
+		else {
+			if (cursor->variableHighFlag) {
+				if (cursor->ipValue > cursor->variable.comparator &&
+					cursor->ipValue < cursor->variable.limit) {
+					cursor->compareResult = INBETWEEN;
+				}
+				else if (cursor->ipValue >= cursor->variable.limit) {
+					cursor->compareResult = NOT_EQUAL;
+				}
+				else {
+					cursor->compareResult = NOT_INBETWEEN;
+				}
+			}
+			else {
+				if (cursor->ipValue > cursor->variable.limit &&
+					cursor->ipValue < cursor->variable.comparator) {
+					cursor->compareResult = INBETWEEN;
+				}
+				else if (cursor->ipValue <= cursor->variable.limit) {
+					cursor->compareResult = NOT_EQUAL;
+				}
+				else {
+					cursor->compareResult = NOT_INBETWEEN;
+				}
+			}
 		}
-		if (cursor->ipValue > cursor->variable.equal &&
-			cursor->ipValue < cursor->variable.limit) {
-			return INBETWEEN;
-		}
-		return NOT_INBETWEEN;
 	}
+
+	// If tracing enabled output the results.
+	TRACE_COMPARE(cursor);
 }
 
 // Evaluates the cursor until a leaf is found and then returns the profile
@@ -926,48 +907,39 @@ static uint32_t evaluate(Cursor* cursor) {
 	do
 	{
 		// Compare the current cursor bits against the variable value.
-		cursor->compareResult = compareIpToVariable(cursor);
-		TRACE_ITERATION(cursor);
+		compareIpToVariable(cursor);
 
 		// Advance the bits before the variable is then changed.
 		cursor->bitIndex += cursor->variable.length;
 
 		switch (cursor->compareResult) {
 		case NOT_INBETWEEN:
-			TRACE_LABEL(cursor, "selectUnequal");
-			found = selectUnequal(cursor);
-			TRACE_BOOL(cursor, "selectUnequal", found);
+			if (cursor->variableHighFlag) {
+				selectCompleteLow(cursor);
+			}
+			else {
+				selectCompleteHigh(cursor);
+			}
 			if (EXCEPTION_FAILED) return 0;
+			found = true;
 			break;
 		case INBETWEEN:
 			if (cursor->variableHighFlag) {
-				TRACE_LABEL(cursor, "selectCompleteUnequalHigh");
-				selectCompleteUnequalHigh(cursor);
+				selectCompleteEqualHigh(cursor);
 			}
 			else {
-				TRACE_LABEL(cursor, "selectCompleteEqualLow");
-				selectCompleteEqualLow(cursor);
+				selectCompleteUnequalHigh(cursor);
 			}
 			if (EXCEPTION_FAILED) return 0;
 			found = true;
 			break;
 		case EQUAL:
-			TRACE_LABEL(cursor, "selectEqual");
 			found = selectEqual(cursor);
-			TRACE_BOOL(cursor, "selectEqual", found);
 			if (EXCEPTION_FAILED) return 0;
 			break;
 		case NOT_EQUAL:
-			if (cursor->variableHighFlag) {
-				TRACE_LABEL(cursor, "selectCompleteLow");
-				selectCompleteLow(cursor);
-			}
-			else {
-				TRACE_LABEL(cursor, "selectCompleteHigh");
-				selectCompleteHigh(cursor);
-			}
+			found = selectUnequal(cursor);
 			if (EXCEPTION_FAILED) return 0;
-			found = true;
 			break;
 		}
 
@@ -990,7 +962,7 @@ static uint32_t ipiGraphEvaluate(
 			Cursor cursor = cursorCreate(graph, address, sb, exception);
 			profileIndex = evaluate(&cursor);
 			if (EXCEPTION_FAILED) return 0;
-			traceResult(&cursor, profileIndex);
+			TRACE_RESULT(&cursor, profileIndex);
 			break;
 		}
 	}
