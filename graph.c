@@ -918,7 +918,8 @@ static uint32_t evaluate(Cursor* cursor) {
 				selectCompleteLow(cursor);
 			}
 			else {
-				selectCompleteHigh(cursor);
+				// selectCompleteHigh(cursor);
+				selectCompleteEqualHigh(cursor);
 			}
 			if (EXCEPTION_FAILED) return 0;
 			found = true;
