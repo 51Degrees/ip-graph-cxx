@@ -87,6 +87,7 @@ typedef struct cursor_t {
 	uint32_t previousBranchIndex; // The index of the previous branch
 	Variable variable; // The current variable that relates to the record index
 	byte variableHighFlag; // True if the high bit of the length field is set
+	byte variableSet; // True after the first time the variable is set
 	CompareResult compareResult; // Result of comparing the current bits to the
 								 // variable value
 	Item item; // Data for the current item in the graph
@@ -342,7 +343,8 @@ static void setVariable(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 
 	// Check that the current variable is valid and only move if not.
-	if (cursor->index >= cursor->variable.startIndex &&
+	if (cursor->variableSet == true &&
+		cursor->index >= cursor->variable.startIndex &&
 		cursor->index <= cursor->variable.endIndex) {
 		return;
 	}
@@ -378,6 +380,10 @@ static void setVariable(Cursor* cursor) {
 
 	// High flag is set if the limit is larger than the equal value
 	cursor->variableHighFlag = cursor->variable.limit > cursor->variable.comparator;
+
+	// Next time the set method is called the check to see if the variable 
+	// needs to be modified can be applied.
+	cursor->variableSet = true;
 }
 
 // Extract the value as an integer from the bit packed record provided.
@@ -646,6 +652,7 @@ static Cursor cursorCreate(
 	cursor.variable.startIndex = 0;
 	cursor.current = 0;
 	cursor.index = 0;
+	cursor.variableSet = false;
 	DataReset(&cursor.item.data);
 	return cursor;
 }
@@ -926,7 +933,7 @@ static uint32_t evaluate(Cursor* cursor) {
 			break;
 		case INBETWEEN:
 			if (cursor->variableHighFlag) {
-				selectCompleteEqualHigh(cursor);
+				selectCompleteUnequalHigh(cursor);
 			}
 			else {
 				selectCompleteUnequalHigh(cursor);
@@ -1070,7 +1077,7 @@ static IpiCgArray* ipiGraphCreate(
 			fiftyoneDegreesIpiGraphFree(graphs);
 			return NULL;
 		}
-		graphs->items->variablesCount = CollectionGetCount(
+		graphs->items[i].variablesCount = CollectionGetCount(
 			graphs->items[i].variables);
 	}
 
