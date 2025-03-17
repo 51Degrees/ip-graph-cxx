@@ -37,10 +37,12 @@ MAP_TYPE(Collection)
  * RESULTS FROM COMPARE OPERATIONS - THE IP ADDRESS SEGMENT IS;
  */
 typedef enum {
-	NOT_INBETWEEN, // Lower than or equal to limit
-	INBETWEEN, // Between equal and limit exclusive
-	EQUAL, // The same as equal
-	NOT_EQUAL // Higher than equal
+	UNUSED,
+	LESS_THAN_LOW,
+	EQUAL_LOW,
+	INBETWEEN,
+	EQUAL_HIGH,
+	GREATER_THAN_HIGH
 } CompareResult;
 
 /**
@@ -62,14 +64,14 @@ typedef Collection*(*collectionCreate)(CollectionHeader header, void* state);
 typedef struct variable_t {
 	uint32_t startIndex; // Inclusive start index in the values collection.
 	uint32_t endIndex; // Inclusive end index in the values collection.
-	byte length; // Length of the equal and limit members
+	byte length; // Length of the low and high members
 	union {
-		uint32_t comparator; // Bits for the equal variable
-		byte comparatorBytes[sizeof(uint32_t)]; // Array of 4 bytes
+		uint32_t low; // Bits for the low variable
+		byte lowBytes[sizeof(uint32_t)]; // Array of 4 bytes
 	};
 	union {
-		uint32_t limit; // Bits for the limit variable
-		byte limitBytes[sizeof(uint32_t)]; // Array of 4 bytes
+		uint32_t high; // Bits for the high variable
+		byte highBytes[sizeof(uint32_t)]; // Array of 4 bytes
 	};
 } Variable;
 #pragma pack(pop)
@@ -83,10 +85,8 @@ typedef struct cursor_t {
 				   // value array
 	uint64_t current; // The value of the current item in the graph
 	uint32_t index; // The current index in the graph values collection
-	uint32_t currentBranchIndex; // The index of the current branch
-	uint32_t previousBranchIndex; // The index of the previous branch
+	uint32_t previousHighIndex; // The index of the last high index
 	Variable variable; // The current variable that relates to the record index
-	byte variableHighFlag; // True if the high bit of the length field is set
 	byte variableSet; // True after the first time the variable is set
 	CompareResult compareResult; // Result of comparing the current bits to the
 								 // variable value
@@ -156,17 +156,17 @@ static void traceInt(Cursor* cursor, const char* method, int64_t value) {
 	traceNewLine(cursor);
 }
 
-#define NIB "NOT_INBETWEEN"
-#define IB "INBETWEEN"
-#define EQ "EQUAL"
-#define NEQ "NOT_EQUAL"
+#define CLTL "LESS_THAN_LOW"
+#define CEL "EQUAL_LOW"
+#define CIB "INBETWEEN"
+#define CEH "EQUAL_HIGH"
+#define CGTH "GREATER_THAN_HIGH"
 #define IP "IP:" // IP value
-#define EV "EV:" // Equal Value
-#define LV "LV:" // Limit Value
+#define LV "LV:" // Low Value
+#define HV "HV:" // High Value
 #define VS "VS:" // Variable Start index
 #define CI "CI:" // Cursor Index
 #define VE "VE:" // Variable End index
-#define VH "VH:" // Variable High flag
 static void traceCompare(Cursor* cursor) {
 	StringBuilderAddChar(cursor->sb, '[');
 	StringBuilderAddInteger(cursor->sb, cursor->bitIndex);
@@ -174,28 +174,31 @@ static void traceCompare(Cursor* cursor) {
 	StringBuilderAddChar(cursor->sb, '=');
 	switch (cursor->compareResult)
 	{
-	case NOT_INBETWEEN:
-		StringBuilderAddChars(cursor->sb, NIB, sizeof(NIB) - 1);
+	case LESS_THAN_LOW:
+		StringBuilderAddChars(cursor->sb, CLTL, sizeof(CLTL) - 1);
+		break;
+	case EQUAL_LOW:
+		StringBuilderAddChars(cursor->sb, CEL, sizeof(CEL) - 1);
 		break;
 	case INBETWEEN:
-		StringBuilderAddChars(cursor->sb, IB, sizeof(IB) - 1);
+		StringBuilderAddChars(cursor->sb, CIB, sizeof(CIB) - 1);
 		break;
-	case EQUAL:
-		StringBuilderAddChars(cursor->sb, EQ, sizeof(EQ) - 1);
+	case EQUAL_HIGH:
+		StringBuilderAddChars(cursor->sb, CEH, sizeof(CEH) - 1);
 		break;
-	case NOT_EQUAL:
-		StringBuilderAddChars(cursor->sb, NEQ, sizeof(NEQ) - 1);
+	case GREATER_THAN_HIGH:
+		StringBuilderAddChars(cursor->sb, CGTH, sizeof(CGTH) - 1);
 		break;
 	}
 	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, IP, sizeof(IP) - 1);
 	uintToBinary(cursor, cursor->ipValue, cursor->variable.length);
 	StringBuilderAddChar(cursor->sb, ' ');
-	StringBuilderAddChars(cursor->sb, EV, sizeof(EV) - 1);
-	uintToBinary(cursor, cursor->variable.comparator, cursor->variable.length);
-	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, LV, sizeof(LV) - 1);
-	uintToBinary(cursor, cursor->variable.limit, cursor->variable.length);
+	uintToBinary(cursor, cursor->variable.low, cursor->variable.length);
+	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddChars(cursor->sb, HV, sizeof(HV) - 1);
+	uintToBinary(cursor, cursor->variable.high, cursor->variable.length);
 	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, VS, sizeof(VS) - 1);
 	StringBuilderAddInteger(cursor->sb, cursor->variable.startIndex);
@@ -205,9 +208,6 @@ static void traceCompare(Cursor* cursor) {
 	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, VE, sizeof(VE) - 1);
 	StringBuilderAddInteger(cursor->sb, cursor->variable.endIndex);
-	StringBuilderAddChar(cursor->sb, ' ');
-	StringBuilderAddChars(cursor->sb, VH, sizeof(VH) - 1);
-	StringBuilderAddInteger(cursor->sb, cursor->variableHighFlag);
 	traceNewLine(cursor);
 }
 
@@ -378,9 +378,6 @@ static void setVariable(Cursor* cursor) {
 		return;
 	}
 
-	// High flag is set if the limit is larger than the equal value
-	cursor->variableHighFlag = cursor->variable.limit > cursor->variable.comparator;
-
 	// Next time the set method is called the check to see if the variable 
 	// needs to be modified can be applied.
 	cursor->variableSet = true;
@@ -457,21 +454,12 @@ static bool isLeaf(Cursor* cursor) {
 	return result;
 }
 
-// True if the cursor value has the unequal flag set, otherwise false.
-static bool isUnequalFlag(Cursor* cursor) {
+// True if the cursor value has the low flag set, otherwise false.
+static bool isLowFlag(Cursor* cursor) {
 	bool result = getMemberValue(
-		cursor->graph->info->value.unequalFlag, 
+		cursor->graph->info->value.lowFlag, 
 		cursor->current) != 0;
-	TRACE_BOOL(cursor, "isUnequalFlag", result);
-	return result;
-}
-
-// True if the cursor value has the unequal flag unset, otherwise false.
-static bool isEqualFlag(Cursor* cursor) {
-	bool result = getMemberValue(
-		cursor->graph->info->value.unequalFlag,
-		cursor->current) == 0;
-	TRACE_BOOL(cursor, "isEqualFlag", result);
+	TRACE_BOOL(cursor, "isLowFlag", result);
 	return result;
 }
 
@@ -517,11 +505,6 @@ static void cursorMove(Cursor* cursor, uint32_t recordIndex) {
 	if (EXCEPTION_FAILED) return;
 }
 
-// Moves the cursor to the entry before the last iteration.
-static void cursorMoveBack(Cursor* cursor) {
-	cursorMove(cursor, cursor->previousBranchIndex);
-}
-
 // Moves the cursor to the next entry.
 static void cursorMoveNext(Cursor* cursor) {
 	cursorMove(cursor, cursor->index + 1);
@@ -537,62 +520,24 @@ static void cursorMoveTo(Cursor* cursor) {
 	cursorMove(cursor, (uint32_t)getValue(cursor));
 }
 
-// True if the next entry is an equal leaf.
-static bool isNextEqualToLeaf(Cursor* cursor) {
-	Exception* exception = cursor->ex;
-	bool result = false;
-	uint64_t current = cursor->current;
-	cursorMoveNext(cursor);
-	if (EXCEPTION_FAILED) return false;
-	result = isLeaf(cursor) && isEqualFlag(cursor);
-	cursorMovePrevious(cursor);
-	if (EXCEPTION_FAILED) return false;
-	TRACE_BOOL(cursor, "isNextEqualToLeaf", result);
-	return result;
-}
-
 // Moves the cursor to the next low entry from the current position.
 static void cursorMoveLow(Cursor* cursor) {
 	Exception* exception = cursor->ex;
+	
+	// If the low flag is set then the entry points to the next low entry.
+	// Move to it.
+	if (isLowFlag(cursor)) {
 
-	// The entry is interpreted differently depending on the high flag.
-	if (cursor->variableHighFlag) {
-
-		// If the high flag and unequal flag are set the current entry is the 
-		// high entry. Move to the next entry which is the low entry.
-		if (isUnequalFlag(cursor)) {
-			cursorMoveNext(cursor);
-			if (EXCEPTION_FAILED) return;
-		}
-
-		if (isLeaf(cursor) == false) {
-
-			// Follow the equal entry.
-			cursorMoveTo(cursor);
-			if (EXCEPTION_FAILED) return;
-		}
+		// The low entry is a branch so move to it.
+		cursorMoveTo(cursor);
+		if (EXCEPTION_FAILED) return;
 	}
 
+	// If the low flag is not set then the next low entry is the next 
+	// consecutive entry. Move to the next entry.
 	else {
-
-		// If the high flag is not set and the unequal flag is set the current 
-		// entry is the low entry. If not a leaf then move to the low entry. If
-		// it is a leaf the cursor is already at the correct entry.
-		if (isUnequalFlag(cursor)) {
-			if (isLeaf(cursor) == false) {
-
-				// The low entry is a branch so move to it.
-				cursorMoveTo(cursor);
-				if (EXCEPTION_FAILED) return;
-			}
-		}
-
-		// If the low flag and unequal flag are both not set then the next 
-		// entry is the low entry. Move to it.
-		else {
-			cursorMoveNext(cursor);
-			if (EXCEPTION_FAILED) return;
-		}
+		cursorMoveNext(cursor);
+		if (EXCEPTION_FAILED) return;
 	}
 }
 
@@ -600,43 +545,15 @@ static void cursorMoveLow(Cursor* cursor) {
 static void cursorMoveHigh(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 
-	// The entry is interpreted differently depending on the high flag.
-	if (cursor->variableHighFlag) {
-
-		// If the high flag and unequal flag are set the current entry is the 
-		// high entry. Process this entry as a leaf or branch.
-		if (isUnequalFlag(cursor)) {
-			if (isLeaf(cursor) == false) {
-
-				// The high entry is a branch so move to it.
-				cursorMoveTo(cursor);
-				if (EXCEPTION_FAILED) return;
-			}
-		}
-
-		// If the high flag is set but the unequal flag is not then the next
-		// entry is the unequal entry. Move to it.
-		else {
-			cursorMoveNext(cursor);
-			if (EXCEPTION_FAILED) return;
-		}
+	// If the low flag is set then the next entry is the high entry.
+	if (isLowFlag(cursor)) {
+		cursorMoveNext(cursor);
+		if (EXCEPTION_FAILED) return;
 	}
 
-	else {
-
-		// If the unequal flag is set then the next entry is the high entry.
-		if (isUnequalFlag(cursor)) {
-			cursorMoveNext(cursor);
-			if (EXCEPTION_FAILED) return;
-		}
-
-		if (isLeaf(cursor) == false) {
-
-			// Follow the high entry.
-			cursorMoveTo(cursor);
-			if (EXCEPTION_FAILED) return;
-		}
-	}
+	// Follow the high entry.
+	cursorMoveTo(cursor);
+	if (EXCEPTION_FAILED) return;
 }
 
 // Creates a cursor ready for evaluation with the graph and IP address.
@@ -653,26 +570,24 @@ static Cursor cursorCreate(
 	cursor.current = 0;
 	cursor.index = 0;
 	cursor.variableSet = false;
+	cursor.compareResult = UNUSED;
+	cursor.previousHighIndex = graph->info->graphIndex;
 	DataReset(&cursor.item.data);
 	return cursor;
 }
 
-/// <summary>
-/// Moves the cursor for an unequal result.
-/// </summary>
-/// <returns>
-/// True if a leaf has been found and getProfileIndex can be used to return a 
-/// result.
-/// </returns>
-static bool selectUnequal(Cursor* cursor) {
+// Moves the cursor for an low entry.
+// Returns true if a leaf has been found and getProfileIndex can be used to
+// return a result.
+static bool selectLow(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 
-	// Check if the current entry is the unequal entry.
-	if (isUnequalFlag(cursor)) {
+	// Check if the current entry is the low entry.
+	if (isLowFlag(cursor)) {
 
 		// If a leaf then return, otherwise move to the entry indicated.
 		if (isLeaf(cursor)) {
-			TRACE_BOOL(cursor, "selectUnequal", true);
+			TRACE_BOOL(cursor, "selectLow", true);
 			return true;
 		}
 		else {
@@ -681,39 +596,34 @@ static bool selectUnequal(Cursor* cursor) {
 		}
 	}
 
-	// If the entry is not marked as unequal then the unequal entry is the next
-	// one in order.
+	// If the entry is not marked as low then the low entry is the next entry.
 	else {
 		cursorMoveNext(cursor);
 		if (EXCEPTION_FAILED) return true;
 	}
 
 	// Return false as no profile index is yet found.
-	TRACE_BOOL(cursor, "selectUnequal", false);
+	TRACE_BOOL(cursor, "selectLow", false);
 	return false;
 }
 
-/// <summary>
-/// Moves the cursor for the equals entry.
-/// </summary>
-/// <returns>
-/// True if a leaf has been found and getProfileIndex can be used to return a 
-/// result.
-/// </returns>
-static bool selectEqual(Cursor* cursor) {
+// Moves the cursor for the high entry.
+// Returns true if a leaf has been found and getProfileIndex can be used to
+// return a result.
+static bool selectHigh(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 
 	// An additional check is needed for the data structure as the current
-	// entry might relate to the unequal entry. If this is the case then the 
-	// next is the one contains the equal entry.
-	if (isUnequalFlag(cursor)) {
+	// entry might relate to the low entry. If this is the case then the next
+	// is the one contains the high entry.
+	if (isLowFlag(cursor)) {
 		cursorMoveNext(cursor);
 		if (EXCEPTION_FAILED) return true;
 	}
 
-	// Check the current entry to see if it is an equal leaf.
+	// Check the current entry to see if it is a high leaf.
 	if (isLeaf(cursor)) {
-		TRACE_BOOL(cursor, "selectEqual", true);
+		TRACE_BOOL(cursor, "selectHigh", true);
 		return true;
 	}
 
@@ -721,129 +631,60 @@ static bool selectEqual(Cursor* cursor) {
 	cursorMoveTo(cursor);
 	if (EXCEPTION_FAILED) return true;
 
-	// Completed processing the selected equals entry. Return false as no 
+	// Completed processing the selected high entry. Return false as no 
 	// profile index is yet found.
-	TRACE_BOOL(cursor, "selectEqual", false);
+	TRACE_BOOL(cursor, "selectHigh", false);
 	return false;
 }
 
 /// <summary>
-/// Moves the cursor to the previous entry, selects the high entry, and then
-/// all the lower entries until a leaf is found.
+/// Moves the cursor back to the prior high entry, then follows the low entries
+/// until a leaf is found.
 /// </summary>
 static void selectCompleteHigh(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	TRACE_LABEL(cursor, "selectCompleteHigh");
-
-	// Move back to the previous entry.
-	cursorMoveBack(cursor);
-	if (EXCEPTION_FAILED) return;
-
-	// Move the cursor to the high node.
-	cursorMoveHigh(cursor);
-	if (EXCEPTION_FAILED) return;
-	
-	// The cursor is now on the higher sibling. Process all the lower entries
-	// until a leaf is found.
-	while (isLeaf(cursor) == false) {
-		cursorMoveLow(cursor);
+	while (selectHigh(cursor) == false) {
 		if (EXCEPTION_FAILED) return;
 	}
 }
 
 /// <summary>
-/// Follows the equal entry taking all the higher paths there after.
+/// Follows the low entry before taking all the high entries until a leaf is
+/// found.
 /// </summary>
-static void selectCompleteEqualHigh(Cursor* cursor) {
+static void selectCompleteLowHigh(Cursor* cursor) {
 	Exception* exception = cursor->ex;
-	TRACE_LABEL(cursor, "selectCompleteEqualHigh");
+	TRACE_LABEL(cursor, "selectCompleteLowHigh");
+	if (selectLow(cursor) == false) {
+		while (selectHigh(cursor) == false) {
+			if (EXCEPTION_FAILED) return;
+		}
+	}
+}
 
-	// Move to the equal entry.
-	selectEqual(cursor);
-
-	// The cursor is now on the equal entry. Process all the higher entries
-	// until a leaf is found.
-	do {
-		cursorMoveHigh(cursor);
-		if (EXCEPTION_FAILED) return;
-	} while (isLeaf(cursor) == false);
+// Moves the cursor back to the previous high entry, and then selects low.
+// Returns true if a leaf is found, otherwise false.
+static bool cursorMoveBack(Cursor* cursor) {
+	Exception* exception = cursor->ex;
+	TRACE_LABEL(cursor, "cursorMoveBack");
+	cursorMove(cursor, cursor->previousHighIndex);
+	if (EXCEPTION_FAILED) return true;
+	return selectLow(cursor);
 }
 
 /// <summary>
-/// Follows the equal entry taking all the lower paths there after.
-/// </summary>
-static void selectCompleteEqualLow(Cursor* cursor) {
-	Exception* exception = cursor->ex;
-	TRACE_LABEL(cursor, "selectCompleteEqualLow");
-
-	// Move to the equal entry.
-	selectEqual(cursor);
-
-	// The cursor is now on the equal entry. Process all the lower entries
-	// until a leaf is found.
-	do {
-		cursorMoveLow(cursor);
-		if (EXCEPTION_FAILED) return;
-	} while (isLeaf(cursor) == false);
-}
-
-/// <summary>
-/// Follows the unequal entry taking all the higher paths there after.
-/// </summary>
-static void selectCompleteUnequalHigh(Cursor* cursor) {
-	Exception* exception = cursor->ex;
-	TRACE_LABEL(cursor, "selectCompleteUnequalHigh");
-
-	// Move to the unequal entry.
-	selectUnequal(cursor);
-
-	// The cursor is now on the equal entry. Process all the higher entries
-	// until a leaf is found.
-	do {
-		cursorMoveHigh(cursor);
-		if (EXCEPTION_FAILED) return;
-	} while (isLeaf(cursor) == false);
-}
-
-/// <summary>
-/// Follows the unequal entry taking all the lower paths there after.
-/// </summary>
-static void selectCompleteUnequalLow(Cursor* cursor) {
-	Exception* exception = cursor->ex;
-	TRACE_LABEL(cursor, "selectCompleteUnequalLow");
-
-	// Move to the unequal entry.
-	selectUnequal(cursor);
-
-	// The cursor is now on the unequal entry. Process all the lower entries
-	// until a leaf is found.
-	do {
-		cursorMoveLow(cursor);
-		if (EXCEPTION_FAILED) return;
-	} while (isLeaf(cursor) == false);
-}
-
-/// <summary>
-/// Moves the cursor to the previous entry, selects the low entry, and then
-/// all the high entries until a leaf is found.
+/// Moves the cursor back to the prior low entry, then follows the high entries
+/// until a leaf is found.
 /// </summary>
 static void selectCompleteLow(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	TRACE_LABEL(cursor, "selectCompleteLow");
-
-	// Move back to the previous entry.
-	cursorMoveBack(cursor);
-	if (EXCEPTION_FAILED) return;
-
-	// Move the cursor to the low node.
-	cursorMoveLow(cursor);
-	if (EXCEPTION_FAILED) return;
-
-	// The cursor is now on the lower sibling. Process all the higher entries
-	// until a leaf is found.
-	while (isLeaf(cursor) == false) {
-		cursorMoveHigh(cursor);
+	if (cursorMoveBack(cursor) == false) {
 		if (EXCEPTION_FAILED) return;
+		while (selectHigh(cursor) == false) {
+			if (EXCEPTION_FAILED) return;
+		}
 	}
 }
 
@@ -853,48 +694,27 @@ static void selectCompleteLow(Cursor* cursor) {
 static void compareIpToVariable(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 
-	// Update the indexes in case there is a need to return to the previous
-	// branch.
-	cursor->previousBranchIndex = cursor->currentBranchIndex;
-	cursor->currentBranchIndex = cursor->index;
-
 	// Set the cursor->ipValue to the required bits from the IP address for
 	// numeric comparison.
 	setIpValue(cursor); 
 
-	if (cursor->ipValue == cursor->variable.comparator) {
-		cursor->compareResult = EQUAL;
+	// Set the comparison result.
+	if (cursor->ipValue < cursor->variable.low) {
+		cursor->compareResult = LESS_THAN_LOW;
+	}
+	else if (cursor->ipValue == cursor->variable.low) {
+		cursor->compareResult = EQUAL_LOW;
+	}
+	else if (cursor->ipValue > cursor->variable.low &&
+		cursor->ipValue < cursor->variable.high) {
+		cursor->compareResult = INBETWEEN;
+	}
+	else if (cursor->ipValue == cursor->variable.high) {
+		cursor->compareResult = EQUAL_HIGH;
+		cursor->previousHighIndex = cursor->index;
 	}
 	else {
-		if (cursor->variable.length == 1) {
-			cursor->compareResult = NOT_EQUAL;
-		}
-		else {
-			if (cursor->variableHighFlag) {
-				if (cursor->ipValue > cursor->variable.comparator &&
-					cursor->ipValue < cursor->variable.limit) {
-					cursor->compareResult = INBETWEEN;
-				}
-				else if (cursor->ipValue >= cursor->variable.limit) {
-					cursor->compareResult = NOT_EQUAL;
-				}
-				else {
-					cursor->compareResult = NOT_INBETWEEN;
-				}
-			}
-			else {
-				if (cursor->ipValue > cursor->variable.limit &&
-					cursor->ipValue < cursor->variable.comparator) {
-					cursor->compareResult = INBETWEEN;
-				}
-				else if (cursor->ipValue <= cursor->variable.limit) {
-					cursor->compareResult = NOT_EQUAL;
-				}
-				else {
-					cursor->compareResult = NOT_INBETWEEN;
-				}
-			}
-		}
+		cursor->compareResult = GREATER_THAN_HIGH;
 	}
 
 	// If tracing enabled output the results.
@@ -920,34 +740,28 @@ static uint32_t evaluate(Cursor* cursor) {
 		cursor->bitIndex += cursor->variable.length;
 
 		switch (cursor->compareResult) {
-		case NOT_INBETWEEN:
-			if (cursor->variableHighFlag) {
-				selectCompleteLow(cursor);
-			}
-			else {
-				// selectCompleteHigh(cursor);
-				selectCompleteEqualHigh(cursor);
-			}
+		case LESS_THAN_LOW:
+			selectCompleteLow(cursor);
 			if (EXCEPTION_FAILED) return 0;
 			found = true;
+			break;
+		case EQUAL_LOW:
+			found = selectLow(cursor);
+			if (EXCEPTION_FAILED) return 0;
 			break;
 		case INBETWEEN:
-			if (cursor->variableHighFlag) {
-				selectCompleteUnequalHigh(cursor);
-			}
-			else {
-				selectCompleteUnequalHigh(cursor);
-			}
+			selectCompleteLowHigh(cursor);
 			if (EXCEPTION_FAILED) return 0;
 			found = true;
 			break;
-		case EQUAL:
-			found = selectEqual(cursor);
+		case EQUAL_HIGH:
+			found = selectHigh(cursor);
 			if (EXCEPTION_FAILED) return 0;
 			break;
-		case NOT_EQUAL:
-			found = selectUnequal(cursor);
+		case GREATER_THAN_HIGH:
+			selectCompleteHigh(cursor);
 			if (EXCEPTION_FAILED) return 0;
+			found = true;
 			break;
 		}
 

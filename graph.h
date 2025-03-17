@@ -90,7 +90,7 @@ typedef struct fiftyone_degrees_ipi_cg_member_collection_t {
 typedef struct fiftyone_degrees_ipi_cg_member_value_t {
 	fiftyoneDegreesIpiCgMemberCollection collection;
 	uint16_t recordSize; /**< Number of bits that form the value record */
-	fiftyoneDegreesIpiCgMember unequalFlag; /**< Bit for the not equal flag */
+	fiftyoneDegreesIpiCgMember lowFlag; /**< Bit for the low flag */
 	fiftyoneDegreesIpiCgMember value; /**< Bits for the value */
 } fiftyoneDegreesIpiCgMemberValue;
 #pragma pack(pop)
