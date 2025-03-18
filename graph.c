@@ -102,7 +102,11 @@ typedef struct cursor_t {
 #define TRACE_LABEL(c,m) traceLabel(c,m);
 #define TRACE_RESULT(c,r) traceResult(c,r);
 #else
-// TODO
+#define TRACE_BOOL(c,m,v)
+#define TRACE_INT(c,m,v)
+#define TRACE_COMPARE(c)
+#define TRACE_LABEL(c,m)
+#define TRACE_RESULT(c,r)
 #endif
 
 static void traceNewLine(Cursor* cursor) {
