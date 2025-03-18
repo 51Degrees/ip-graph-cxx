@@ -45,6 +45,9 @@ typedef enum {
 	GREATER_THAN_HIGH
 } CompareResult;
 
+// The type of the variable. Either 32 or 64 bit unsigned integer.
+#define VAR_TYPE uint64_t
+
 /**
  * DATA STRUCTURES
  */
@@ -66,12 +69,12 @@ typedef struct variable_t {
 	uint32_t endIndex; // Inclusive end index in the values collection.
 	byte length; // Length of the low and high members
 	union {
-		uint32_t low; // Bits for the low variable
-		byte lowBytes[sizeof(uint32_t)]; // Array of 4 bytes
+		VAR_TYPE low; // Bits for the low variable
+		byte lowBytes[sizeof(VAR_TYPE)]; // Array of X bytes
 	};
 	union {
-		uint32_t high; // Bits for the high variable
-		byte highBytes[sizeof(uint32_t)]; // Array of 4 bytes
+		VAR_TYPE high; // Bits for the high variable
+		byte highBytes[sizeof(VAR_TYPE)]; // Array of X bytes
 	};
 } Variable;
 #pragma pack(pop)
@@ -80,7 +83,7 @@ typedef struct variable_t {
 typedef struct cursor_t {
 	IpiCg* const graph; // Graph the cursor is working with
 	IpAddress const ip; // The IP address source
-	uint32_t ipValue; // The value that should be compared to the variable
+	VAR_TYPE ipValue; // The value that should be compared to the variable
 	byte bitIndex; // Current bit index from high to low in the IP address 
 				   // value array
 	uint64_t current; // The value of the current item in the graph
@@ -239,7 +242,7 @@ static IpType getIpTypeFromVersion(byte version) {
 static void setIpValue(Cursor* cursor) {
 	
 	// Reset the IP value ready to include the new bits.
-	uint32_t value = 0;
+	VAR_TYPE value = 0;
 
 	// Extract cursor->variableLength bits from cursor->bitIndex.
 	for (byte i = 0; i < cursor->variable.length; i++) {
