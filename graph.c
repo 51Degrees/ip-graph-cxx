@@ -37,16 +37,14 @@ MAP_TYPE(Collection)
  * RESULTS FROM COMPARE OPERATIONS - THE IP ADDRESS SEGMENT IS;
  */
 typedef enum {
-	UNUSED,
-	LESS_THAN_LOW,
+	NO_COMPARE,
 	EQUAL_LOW,
 	INBETWEEN,
 	EQUAL_HIGH,
-	GREATER_THAN_HIGH
 } CompareResult;
 
-// The type of the variable. Either 32 or 64 bit unsigned integer.
-#define VAR_TYPE uint64_t
+// Number of bytes that can form an IP value or span lmiit.
+#define VAR_SIZE 16
 
 /**
  * DATA STRUCTURES
@@ -62,35 +60,41 @@ typedef struct file_collection_t {
 // Function used to create the collection for each of the graphs.
 typedef Collection*(*collectionCreate)(CollectionHeader header, void* state);
 
-// Structure for the variables.
+// Structure for the span bytes.
 #pragma pack(push, 1)
-typedef struct variable_t {
+typedef struct span_limits_t {
+	byte low[2];
+	byte high[2];
+} SpanLimits;
+#pragma pack(pop)
+
+// Structure for the span.
+#pragma pack(push, 1)
+typedef struct span_t {
 	uint32_t startIndex; // Inclusive start index in the values collection.
 	uint32_t endIndex; // Inclusive end index in the values collection.
-	byte length; // Length of the low and high members
+	byte length; // Bit length of the low and high limits
 	union {
-		VAR_TYPE low; // Bits for the low variable
-		byte lowBytes[sizeof(VAR_TYPE)]; // Array of X bytes
+		uint32_t offset; // Offset to the span bytes
+		SpanLimits limits; // Array of 2x2 bytes
 	};
-	union {
-		VAR_TYPE high; // Bits for the high variable
-		byte highBytes[sizeof(VAR_TYPE)]; // Array of X bytes
-	};
-} Variable;
+} Span;
 #pragma pack(pop)
 
 // Cursor used to traverse the graph for each of the bits in the IP address.
 typedef struct cursor_t {
 	IpiCg* const graph; // Graph the cursor is working with
 	IpAddress const ip; // The IP address source
-	VAR_TYPE ipValue; // The value that should be compared to the variable
+	byte ipValue[VAR_SIZE]; // The value that should be compared to the span
 	byte bitIndex; // Current bit index from high to low in the IP address 
 				   // value array
 	uint64_t current; // The value of the current item in the graph
 	uint32_t index; // The current index in the graph values collection
 	uint32_t previousHighIndex; // The index of the last high index
-	Variable variable; // The current variable that relates to the record index
-	byte variableSet; // True after the first time the variable is set
+	Span span; // The current variable that relates to the record index
+	byte spanLow[VAR_SIZE]; // Low limit for the span
+	byte spanHigh[VAR_SIZE]; // High limit for the span
+	byte spanSet; // True after the first time the variable is set
 	CompareResult compareResult; // Result of comparing the current bits to the
 								 // variable value
 	Item item; // Data for the current item in the graph
@@ -112,6 +116,23 @@ typedef struct cursor_t {
 #define TRACE_RESULT(c,r)
 #endif
 
+// Outputs to the string builder the bits from high to low order for the bytes
+// provided.
+static void bytesToBinary(Cursor* cursor, byte bytes[VAR_SIZE], int length) {
+	int count = 0;
+	for (int i = length - 1; i >= 0; i--)
+	{
+		int current = bytes[i / 8];
+		int bitIndex = 7 - (i % 8);
+		int bit = (current & (1 << bitIndex)) != 0;
+		StringBuilderAddChar(cursor->sb, bit ? '1' : '0');
+		count++;
+		if (count % 4 == 0 && i > 0) {
+			StringBuilderAddChar(cursor->sb, ' ');
+		}
+	}
+}
+
 static void traceNewLine(Cursor* cursor) {
 	StringBuilderAddChar(cursor->sb, '\r');
 	StringBuilderAddChar(cursor->sb, '\n');
@@ -121,20 +142,6 @@ static void traceLabel(Cursor* cursor, const char* label) {
 	StringBuilderAddChar(cursor->sb, '\t');
 	StringBuilderAddChars(cursor->sb, label, strlen(label));
 	traceNewLine(cursor);
-}
-
-// Returns the bits from high to low order.
-static void uintToBinary(Cursor* cursor, uint64_t number, int length) {
-	int count = 0;
-	for (int i = length - 1; i >= 0; i--)
-	{
-		int bit = (number & (((uint64_t)1) << i)) != 0;
-		StringBuilderAddChar(cursor->sb, bit ? '1' : '0');
-		count++;
-		if (count % 4 == 0 && i > 0) {
-			StringBuilderAddChar(cursor->sb, ' ');
-		}
-	}
 }
 
 #define TRACE_TRUE "true"
@@ -163,11 +170,9 @@ static void traceInt(Cursor* cursor, const char* method, int64_t value) {
 	traceNewLine(cursor);
 }
 
-#define CLTL "LESS_THAN_LOW"
 #define CEL "EQUAL_LOW"
 #define CIB "INBETWEEN"
 #define CEH "EQUAL_HIGH"
-#define CGTH "GREATER_THAN_HIGH"
 #define IP "IP:" // IP value
 #define LV "LV:" // Low Value
 #define HV "HV:" // High Value
@@ -181,9 +186,6 @@ static void traceCompare(Cursor* cursor) {
 	StringBuilderAddChar(cursor->sb, '=');
 	switch (cursor->compareResult)
 	{
-	case LESS_THAN_LOW:
-		StringBuilderAddChars(cursor->sb, CLTL, sizeof(CLTL) - 1);
-		break;
 	case EQUAL_LOW:
 		StringBuilderAddChars(cursor->sb, CEL, sizeof(CEL) - 1);
 		break;
@@ -193,28 +195,25 @@ static void traceCompare(Cursor* cursor) {
 	case EQUAL_HIGH:
 		StringBuilderAddChars(cursor->sb, CEH, sizeof(CEH) - 1);
 		break;
-	case GREATER_THAN_HIGH:
-		StringBuilderAddChars(cursor->sb, CGTH, sizeof(CGTH) - 1);
-		break;
 	}
 	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, IP, sizeof(IP) - 1);
-	uintToBinary(cursor, cursor->ipValue, cursor->variable.length);
+	bytesToBinary(cursor, cursor->ipValue, cursor->span.length);
 	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, LV, sizeof(LV) - 1);
-	uintToBinary(cursor, cursor->variable.low, cursor->variable.length);
+	bytesToBinary(cursor, cursor->spanLow, cursor->span.length);
 	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, HV, sizeof(HV) - 1);
-	uintToBinary(cursor, cursor->variable.high, cursor->variable.length);
+	bytesToBinary(cursor, cursor->spanHigh, cursor->span.length);
 	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, VS, sizeof(VS) - 1);
-	StringBuilderAddInteger(cursor->sb, cursor->variable.startIndex);
+	StringBuilderAddInteger(cursor->sb, cursor->span.startIndex);
 	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, CI, sizeof(CI) - 1);
 	StringBuilderAddInteger(cursor->sb, cursor->index);
 	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, VE, sizeof(VE) - 1);
-	StringBuilderAddInteger(cursor->sb, cursor->variable.endIndex);
+	StringBuilderAddInteger(cursor->sb, cursor->span.endIndex);
 	traceNewLine(cursor);
 }
 
@@ -237,29 +236,40 @@ static IpType getIpTypeFromVersion(byte version) {
 	}
 }
 
+// Resets the bytes to zero.
+static void resetBytes(byte* bytes) {
+	for (int i = 0; i < VAR_SIZE; i++) {
+		if (bytes[i] != 0) {
+			bytes[i] = 0;
+		}
+		else {
+			break;
+		}
+	}
+}
+
 // Sets the cursor->ipValue to the bits needed to perform an integer comparison
 // operation with the cursor->variable.
 static void setIpValue(Cursor* cursor) {
 	
 	// Reset the IP value ready to include the new bits.
-	VAR_TYPE value = 0;
+	resetBytes(cursor->ipValue);
 
 	// Extract cursor->variableLength bits from cursor->bitIndex.
-	for (byte i = 0; i < cursor->variable.length; i++) {
+	for (byte i = 0; i < cursor->span.length; i++) {
 
-		byte currentBitIndex = cursor->bitIndex + i;
-		byte byteIndex = currentBitIndex / 8;
-		byte bitInByte = currentBitIndex % 8;
+		byte currentIpBitIndex = cursor->bitIndex + i;
+		byte byteIndex = currentIpBitIndex / 8;
+		byte bitInIp = currentIpBitIndex % 8;
+		byte* valueByte = &cursor->ipValue[i / 8];
 
 		// Shift the current byte so that the target bit is in the LSB, then 
 		// mask it.
-		byte bit = (cursor->ip.value[byteIndex] >> (7 - bitInByte)) & 1;
+		byte bit = (cursor->ip.value[byteIndex] >> (7 - bitInIp)) & 1;
 
 		// Shift result left to make room for this new bit, then add it.
-		value = (value << 1) | bit;
+		*valueByte = (*valueByte << 1) | bit;
 	}
-
-	cursor->ipValue = value;
 }
 
 // True if all the bytes of the address have been consumed.
@@ -268,30 +278,30 @@ static bool isExhausted(Cursor* cursor) {
 	return byteIndex >= sizeof(cursor->ip.value);
 }
 
-// Comparer used to determine if the selected variable is higher or lower than
+// Comparer used to determine if the selected span is higher or lower than
 // the target.
-static int setVariableComparer(
+static int setSpanComparer(
 	Cursor* cursor,
 	Item* item,
 	long curIndex,
 	Exception* exception) {
-	Variable* variable = (Variable*)item->data.ptr;
+	Span* span = (Span*)item->data.ptr;
 
-	// Store a copy of the variable in the cursor to avoid needing to fetch it
+	// Store a copy of the span in the cursor to avoid needing to fetch it
 	// again should it prove to be the required result.
-	cursor->variable = *variable;
+	cursor->span = *span;
 
-	// If this variable is within the require range then its the correct one
+	// If this span is within the require range then its the correct one
 	// to return.
-	if (cursor->index >= variable->startIndex &&
-		cursor->index <= variable->endIndex) {
+	if (cursor->index >= span->startIndex &&
+		cursor->index <= span->endIndex) {
 		return 0;
 	}
 
-	return variable->startIndex - cursor->index;
+	return span->startIndex - cursor->index;
 }
 
-static uint32_t setVariableSearch(
+static uint32_t setSpanSearch(
 	fiftyoneDegreesCollection* collection,
 	fiftyoneDegreesCollectionItem* item,
 	uint32_t lowerIndex,
@@ -316,7 +326,7 @@ static uint32_t setVariableSearch(
 
 		// Perform the binary search using the comparer provided with the item
 		// just returned.
-		comparisonResult = setVariableComparer(cursor, item, middle, exception);
+		comparisonResult = setSpanComparer(cursor, item, middle, exception);
 		if (EXCEPTION_OKAY == false) {
 			return 0;
 		}
@@ -344,50 +354,114 @@ static uint32_t setVariableSearch(
 	return middle;
 }
 
-// Sets the cursor variable to the correct settings for the current value 
+// Copies bits from the source to the destination starting at the start bit in
+// the source provided and including the subsequent bits.
+static void copyBits(byte* dest, byte* src, int startBit, int bits) {
+	for (int i = 0, s = startBit; i < bits; i++, s++) {
+		byte srcByte = src[s / 8];
+		int srcBitIndex = 7 - (s % 8);
+		byte srcBit = srcByte & (1 << srcBitIndex);
+		if (srcBit) {
+			byte destByte = src[i / 8];
+			destByte |= 1 << (7 - (i % 8));
+		}
+	}
+}
+
+static void setSpanBytes(Cursor* cursor) {
+	Exception* exception = cursor->ex;
+	
+	// Use the current span offset to get the bytes.
+	byte* bytes = cursor->graph->spanBytes->get(
+		cursor->graph->spanBytes,
+		cursor->span.offset,
+		&cursor->item,
+		cursor->ex);
+	if (EXCEPTION_FAILED) return;
+
+	// Copy the bits to the low and high bytes ready for comparison.
+	copyBits(
+		cursor->spanLow, 
+		bytes, 
+		0,
+		cursor->span.length);
+	copyBits(
+		cursor->spanHigh,
+		bytes, 
+		cursor->span.length, 
+		cursor->span.length);
+
+	COLLECTION_RELEASE(cursor->graph->spanBytes, &cursor->item);
+}
+
+// Copies the two bytes for the low and high limits.
+void setSpanLimits(Cursor* cursor)
+{
+	memcpy(
+		&cursor->spanLow,
+		&cursor->span.limits.low,
+		sizeof(cursor->span.limits.low));
+	memcpy(
+		&cursor->spanHigh,
+		&cursor->span.limits.high,
+		sizeof(cursor->span.limits.high));
+}
+
+// Sets the cursor span to the correct settings for the current node 
 // record index. Uses the binary search feature of the collection.
-static void setVariable(Cursor* cursor) {
+static void setSpan(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 
 	// Check that the current variable is valid and only move if not.
-	if (cursor->variableSet == true &&
-		cursor->index >= cursor->variable.startIndex &&
-		cursor->index <= cursor->variable.endIndex) {
+	if (cursor->spanSet == true &&
+		cursor->index >= cursor->span.startIndex &&
+		cursor->index <= cursor->span.endIndex) {
 		return;
 	}
 
 	// Use binary search to find the index for the variable. The comparer 
 	// records the last variable checked the cursor will have the correct
 	// variable after the search operation.
-	uint32_t index = setVariableSearch(
-		cursor->graph->variables,
+	uint32_t index = setSpanSearch(
+		cursor->graph->spans,
 		&cursor->item,
 		0,
-		cursor->graph->variablesCount - 1,
+		cursor->graph->spansCount - 1,
 		cursor,
 		cursor->ex);
 
 	// Validate that the variable set has a start index equal to or greater
 	// than the current cursor position.
-	if (cursor->index < cursor->variable.startIndex) {
+	if (cursor->index < cursor->span.startIndex) {
 		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
 		return;
 	}
-	if (cursor->index > cursor->variable.endIndex) {
+	if (cursor->index > cursor->span.endIndex) {
 		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
 		return;
 	}
 
 	// Validate that the index returned is less than the number of entries in
 	// the graph collection.
-	if (index >= cursor->graph->variablesCount) {
+	if (index >= cursor->graph->spansCount) {
 		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
 		return;
 	}
 
+	// If the span is more than 16 bits then the span bytes are contained in
+	// another collection.
+	resetBytes(cursor->spanLow);
+	resetBytes(cursor->spanHigh);
+	if (cursor->span.length > 16) {
+		setSpanBytes(cursor);
+	}
+	else {
+		setSpanLimits(cursor);
+	}
+
 	// Next time the set method is called the check to see if the variable 
 	// needs to be modified can be applied.
-	cursor->variableSet = true;
+	cursor->spanSet = true;
 }
 
 // Extract the value as an integer from the bit packed record provided.
@@ -432,7 +506,7 @@ static uint32_t getMemberValue(IpiCgMember member, uint64_t source) {
 // Returns the value of the current item.
 static uint32_t getValue(Cursor* cursor) {
 	uint32_t result = getMemberValue(
-		cursor->graph->info->value.value, 
+		cursor->graph->info->nodes.value, 
 		cursor->current);
 	return result;
 }
@@ -441,7 +515,7 @@ static uint32_t getValue(Cursor* cursor) {
 // index.
 static bool getIsProfileIndex(Cursor* cursor) {
 	bool result = getValue(cursor) >= 
-		cursor->graph->info->value.collection.count;
+		cursor->graph->info->nodes.collection.count;
 	TRACE_BOOL(cursor, "getIsProfileIndex", result);
 	return result;
 }
@@ -450,7 +524,7 @@ static bool getIsProfileIndex(Cursor* cursor) {
 // getIsProfileIndex must be called before getting the profile index.
 static uint32_t getProfileIndex(Cursor* cursor) {
 	uint32_t result = (uint32_t)(
-		getValue(cursor) - cursor->graph->info->value.collection.count);
+		getValue(cursor) - cursor->graph->info->nodes.collection.count);
 	return result;
 }
 
@@ -464,7 +538,7 @@ static bool isLeaf(Cursor* cursor) {
 // True if the cursor value has the low flag set, otherwise false.
 static bool isLowFlag(Cursor* cursor) {
 	bool result = getMemberValue(
-		cursor->graph->info->value.lowFlag, 
+		cursor->graph->info->nodes.lowFlag, 
 		cursor->current) != 0;
 	TRACE_BOOL(cursor, "isLowFlag", result);
 	return result;
@@ -482,13 +556,13 @@ static void cursorMove(Cursor* cursor, uint32_t recordIndex) {
 	// within that byte.
 	uint64_t startBitIndex = (
 		recordIndex *
-		cursor->graph->info->value.recordSize);
+		cursor->graph->info->nodes.recordSize);
 	uint64_t byteIndex = startBitIndex / 8;
 	byte highBitIndex = 7 - (startBitIndex % 8);
 
 	// Get a pointer to that byte from the collection.
-	byte* ptr = (byte*)cursor->graph->values->get(
-		cursor->graph->values,
+	byte* ptr = (byte*)cursor->graph->nodes->get(
+		cursor->graph->nodes,
 		(uint32_t)byteIndex,
 		&cursor->item,
 		cursor->ex);
@@ -500,7 +574,7 @@ static void cursorMove(Cursor* cursor, uint32_t recordIndex) {
 	// Move the bits in the bytes pointed to create the requirement unsigned
 	// long.
 	cursor->current = extractValue(
-		cursor->graph->info->value.recordSize,
+		cursor->graph->info->nodes.recordSize,
 		ptr,
 		highBitIndex);
 
@@ -508,7 +582,7 @@ static void cursorMove(Cursor* cursor, uint32_t recordIndex) {
 	cursor->item.collection->release(&cursor->item);
 
 	// Set the correct variable to use for any compare operations.
-	setVariable(cursor);
+	setSpan(cursor);
 	if (EXCEPTION_FAILED) return;
 }
 
@@ -572,12 +646,12 @@ static Cursor cursorCreate(
 	Cursor cursor = { graph, ip };
 	cursor.ex = exception;
 	cursor.sb = sb;
-	cursor.variable.length = 0;
-	cursor.variable.startIndex = 0;
+	cursor.span.length = 0;
+	cursor.span.startIndex = 0;
 	cursor.current = 0;
 	cursor.index = 0;
-	cursor.variableSet = false;
-	cursor.compareResult = UNUSED;
+	cursor.spanSet = false;
+	cursor.compareResult = NO_COMPARE;
 	cursor.previousHighIndex = graph->info->graphIndex;
 	DataReset(&cursor.item.data);
 	return cursor;
@@ -695,10 +769,25 @@ static void selectCompleteLow(Cursor* cursor) {
 	}
 }
 
+// If the bytes of first and second that are needed to cover the bits are equal
+// returns true, otherwise false.
+static bool compareBytes(
+	byte first[VAR_SIZE], 
+	byte second[VAR_SIZE], 
+	int bits) {
+	int bytes = (bits / 8) + (bits % 8 != 0 ? 1 : 0);
+	for (int i = 0; i < bytes; i++) {
+		if (first[i] != second[i]) {
+			return false;
+		}
+	}
+	return true;
+}
+
 // Compares the current variable to the relevant bits in the IP address. The
 // comparison varies depending on whether the limit is lower or higher than the
 // equal variable.
-static void compareIpToVariable(Cursor* cursor) {
+static void compareIpToSpan(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 
 	// Set the cursor->ipValue to the required bits from the IP address for
@@ -706,22 +795,20 @@ static void compareIpToVariable(Cursor* cursor) {
 	setIpValue(cursor); 
 
 	// Set the comparison result.
-	if (cursor->ipValue < cursor->variable.low) {
-		cursor->compareResult = LESS_THAN_LOW;
-	}
-	else if (cursor->ipValue == cursor->variable.low) {
+	if (compareBytes(
+		cursor->ipValue,
+		cursor->spanLow, 
+		cursor->span.length)) {
 		cursor->compareResult = EQUAL_LOW;
 	}
-	else if (cursor->ipValue > cursor->variable.low &&
-		cursor->ipValue < cursor->variable.high) {
-		cursor->compareResult = INBETWEEN;
-	}
-	else if (cursor->ipValue == cursor->variable.high) {
+	else if (compareBytes(
+		cursor->ipValue, 
+		cursor->spanHigh, 
+		cursor->span.length)) {
 		cursor->compareResult = EQUAL_HIGH;
-		cursor->previousHighIndex = cursor->index;
 	}
 	else {
-		cursor->compareResult = GREATER_THAN_HIGH;
+		cursor->compareResult = INBETWEEN;
 	}
 
 	// If tracing enabled output the results.
@@ -741,17 +828,12 @@ static uint32_t evaluate(Cursor* cursor) {
 	do
 	{
 		// Compare the current cursor bits against the variable value.
-		compareIpToVariable(cursor);
+		compareIpToSpan(cursor);
 
 		// Advance the bits before the variable is then changed.
-		cursor->bitIndex += cursor->variable.length;
+		cursor->bitIndex += cursor->span.length;
 
 		switch (cursor->compareResult) {
-		case LESS_THAN_LOW:
-			selectCompleteLow(cursor);
-			if (EXCEPTION_FAILED) return 0;
-			found = true;
-			break;
 		case EQUAL_LOW:
 			found = selectLow(cursor);
 			if (EXCEPTION_FAILED) return 0;
@@ -764,11 +846,6 @@ static uint32_t evaluate(Cursor* cursor) {
 		case EQUAL_HIGH:
 			found = selectHigh(cursor);
 			if (EXCEPTION_FAILED) return 0;
-			break;
-		case GREATER_THAN_HIGH:
-			selectCompleteHigh(cursor);
-			if (EXCEPTION_FAILED) return 0;
-			found = true;
 			break;
 		}
 
@@ -848,8 +925,8 @@ static IpiCgArray* ipiGraphCreate(
 	}
 
 	for (uint32_t i = 0; i < count; i++) {
-		graphs->items[i].values = NULL;
-		graphs->items[i].variables = NULL;
+		graphs->items[i].nodes = NULL;
+		graphs->items[i].spans = NULL;
 
 		// Get the information from the collection provided.
 		DataReset(&graphs->items[i].itemInfo.data);
@@ -870,36 +947,53 @@ static IpiCgArray* ipiGraphCreate(
 		// Must be zero as the count is not measured in bytes.
 		headerValues.count = 0; 
 		headerValues.length = 
-			graphs->items[i].info->value.collection.length;
+			graphs->items[i].info->nodes.collection.length;
 		headerValues.startPosition = 
-			graphs->items[i].info->value.collection.startPosition;
-		graphs->items[i].values = collectionCreate(
+			graphs->items[i].info->nodes.collection.startPosition;
+		graphs->items[i].nodes = collectionCreate(
 			headerValues,
 			state);
-		if (graphs->items[i].values == NULL) {
+		if (graphs->items[i].nodes == NULL) {
 			EXCEPTION_SET(CORRUPT_DATA);
 			fiftyoneDegreesIpiGraphFree(graphs);
 			return NULL;
 		}
 
-		// Create the collection for the variables that are used to evaluate
-		// the result of each value record.
-		CollectionHeader headerVariables;
-		headerVariables.count = graphs->items[i].info->variable.count;
-		headerVariables.length =
-			graphs->items[i].info->variable.length;
-		headerVariables.startPosition =
-			graphs->items[i].info->variable.startPosition;
-		graphs->items[i].variables = collectionCreate(
-			headerVariables,
+		// Create the collection for the spans that are used to evaluate
+		// the result of each node.
+		CollectionHeader headerSpans;
+		headerSpans.count = graphs->items[i].info->spans.count;
+		headerSpans.length =
+			graphs->items[i].info->spans.length;
+		headerSpans.startPosition =
+			graphs->items[i].info->spans.startPosition;
+		graphs->items[i].spans = collectionCreate(
+			headerSpans,
 			state);
-		if (graphs->items[i].variables == NULL) {
+		if (graphs->items[i].spans == NULL) {
 			EXCEPTION_SET(CORRUPT_DATA);
 			fiftyoneDegreesIpiGraphFree(graphs);
 			return NULL;
 		}
-		graphs->items[i].variablesCount = CollectionGetCount(
-			graphs->items[i].variables);
+		graphs->items[i].spansCount = CollectionGetCount(
+			graphs->items[i].spans);
+
+		// Create the collection for the span bytes that are used to obtain the
+		// limits for a span where more than 16 bits per limit are needed.
+		CollectionHeader headerSpanBytes;
+		headerSpanBytes.count = graphs->items[i].info->spanBytes.count;
+		headerSpanBytes.length =
+			graphs->items[i].info->spanBytes.length;
+		headerSpanBytes.startPosition =
+			graphs->items[i].info->spanBytes.startPosition;
+		graphs->items[i].spanBytes = collectionCreate(
+			headerSpanBytes,
+			state);
+		if (graphs->items[i].spanBytes == NULL) {
+			EXCEPTION_SET(CORRUPT_DATA);
+			fiftyoneDegreesIpiGraphFree(graphs);
+			return NULL;
+		}
 	}
 
 	return graphs;
@@ -909,8 +1003,8 @@ void fiftyoneDegreesIpiGraphFree(fiftyoneDegreesIpiCgArray* graphs) {
 	for (uint32_t i = 0; i < graphs->count; i++) {
 		graphs->items[i].itemInfo.collection->release(
 			&graphs->items[i].itemInfo);
-		FIFTYONE_DEGREES_COLLECTION_FREE(graphs->items[i].values);
-		FIFTYONE_DEGREES_COLLECTION_FREE(graphs->items[i].variables);
+		FIFTYONE_DEGREES_COLLECTION_FREE(graphs->items[i].nodes);
+		FIFTYONE_DEGREES_COLLECTION_FREE(graphs->items[i].spans);
 	}
 	Free(graphs);
 }

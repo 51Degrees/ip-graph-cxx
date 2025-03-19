@@ -108,11 +108,11 @@ typedef struct fiftyone_degrees_ipi_cg_info_t {
 				  the data file. The value can still be cast to the enum type
 				  fiftyoneDegreesIpEvidenceType */
 	byte componentId; /**< The component id the graph relates to. */
-	
 	uint32_t graphIndex; /**< The index to the entry record in the header data
 						 structure for the graph. */
-	fiftyoneDegreesIpiCgMemberCollection variable;
-	fiftyoneDegreesIpiCgMemberValue value;
+	fiftyoneDegreesIpiCgMemberCollection spanBytes;
+	fiftyoneDegreesIpiCgMemberCollection spans;
+	fiftyoneDegreesIpiCgMemberValue nodes;
 } fiftyoneDegreesIpiCgInfo;
 #pragma pack(pop)
 
@@ -122,9 +122,10 @@ typedef struct fiftyone_degrees_ipi_cg_info_t {
  */
 typedef struct fiftyone_degrees_ipi_cg_t {
 	fiftyoneDegreesIpiCgInfo* info;
-	fiftyoneDegreesCollection* values; /**< Values collection */
-	fiftyoneDegreesCollection* variables; /**< Variables collection */
-	uint32_t variablesCount; /**< Number of variables available */
+	fiftyoneDegreesCollection* nodes; /**< Nodes collection */
+	fiftyoneDegreesCollection* spans; /**< Spans collection */
+	fiftyoneDegreesCollection* spanBytes; /**< Span bytes collection */
+	uint32_t spansCount; /**< Number of variables available */
 	fiftyoneDegreesCollectionItem itemInfo; /**< Handle for info */
 } fiftyoneDegreesIpiCg;
 
