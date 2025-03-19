@@ -91,6 +91,7 @@ typedef struct cursor_t {
 				   // value array
 	uint64_t current; // The value of the current item in the graph
 	uint32_t index; // The current index in the graph values collection
+	uint32_t previousHighIndex; // The index of the last high index
 	Span span; // The current span that relates to the record index
 	byte spanLow[VAR_SIZE]; // Low limit for the span
 	byte spanHigh[VAR_SIZE]; // High limit for the span
@@ -635,6 +636,7 @@ static Cursor cursorCreate(
 	cursor.index = 0;
 	cursor.spanSet = false;
 	cursor.compareResult = NO_COMPARE;
+	cursor.previousHighIndex = graph->info->graphIndex;
 	DataReset(&cursor.item.data);
 	return cursor;
 }
@@ -668,6 +670,16 @@ static bool selectLow(Cursor* cursor) {
 	// Return false as no profile index is yet found.
 	TRACE_BOOL(cursor, "selectLow", false);
 	return false;
+}
+
+// Moves the cursor back to the previous high entry, and then selects low.
+// Returns true if a leaf is found, otherwise false.
+static bool cursorMoveBack(Cursor* cursor) {
+	Exception* exception = cursor->ex;
+	TRACE_LABEL(cursor, "cursorMoveBack");
+	cursorMove(cursor, cursor->previousHighIndex);
+	if (EXCEPTION_FAILED) return true;
+	return selectLow(cursor);
 }
 
 // Moves the cursor for the high entry.
@@ -727,8 +739,11 @@ static void selectCompleteLowHigh(Cursor* cursor) {
 static void selectCompleteLow(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	TRACE_LABEL(cursor, "selectCompleteLow");
-	while (selectLow(cursor) == false) {
+	if (cursorMoveBack(cursor) == false) {
 		if (EXCEPTION_FAILED) return;
+		while (selectHigh(cursor) == false) {
+			if (EXCEPTION_FAILED) return;
+		}
 	}
 }
 
@@ -763,6 +778,7 @@ static void compareIpToSpan(Cursor* cursor) {
 	}
 	else if (highCompare == 0) {
 		cursor->compareResult = EQUAL_HIGH;
+		cursor->previousHighIndex = cursor->index;
 	}
 	else if (highCompare > 0) {
 		cursor->compareResult = GREATER_THAN_HIGH;
