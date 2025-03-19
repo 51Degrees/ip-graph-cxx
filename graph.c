@@ -19,7 +19,7 @@
  * in the end user terms of the application under an appropriate heading, 
  * such notice(s) shall fulfill the requirements of that article.
  *
- * [TODO INSERT PATENT NOTICE]
+ * [TODO INSERT PATENT NOTICE AND WIPE REPO HISTORY]
  * 
  * ********************************************************************* */
 
@@ -30,7 +30,6 @@ MAP_TYPE(IpiCg)
 MAP_TYPE(IpiCgArray)
 MAP_TYPE(IpiCgMember)
 MAP_TYPE(IpiCgInfo)
-MAP_TYPE(IpiCgMemberValue)
 MAP_TYPE(Collection)
 
 /**
@@ -45,7 +44,7 @@ typedef enum {
 	GREATER_THAN_HIGH
 } CompareResult;
 
-// Number of bytes that can form an IP value or span lmiit.
+// Number of bytes that can form an IP value or span limit.
 #define VAR_SIZE 16
 
 /**
@@ -62,7 +61,7 @@ typedef struct file_collection_t {
 // Function used to create the collection for each of the graphs.
 typedef Collection*(*collectionCreate)(CollectionHeader header, void* state);
 
-// Structure for the span bytes.
+// Structure for the span bytes when length is <= 16.
 #pragma pack(push, 1)
 typedef struct span_limits_t {
 	byte low[2];
@@ -73,8 +72,8 @@ typedef struct span_limits_t {
 // Structure for the span.
 #pragma pack(push, 1)
 typedef struct span_t {
-	uint32_t startIndex; // Inclusive start index in the values collection.
-	uint32_t endIndex; // Inclusive end index in the values collection.
+	uint32_t startIndex; // Inclusive start index in the nodes collection.
+	uint32_t endIndex; // Inclusive end index in the nodes collection.
 	byte length; // Bit length of the low and high limits
 	union {
 		uint32_t offset; // Offset to the span bytes
@@ -92,12 +91,12 @@ typedef struct cursor_t {
 				   // value array
 	uint64_t current; // The value of the current item in the graph
 	uint32_t index; // The current index in the graph values collection
-	Span span; // The current variable that relates to the record index
+	Span span; // The current span that relates to the record index
 	byte spanLow[VAR_SIZE]; // Low limit for the span
 	byte spanHigh[VAR_SIZE]; // High limit for the span
-	byte spanSet; // True after the first time the variable is set
+	byte spanSet; // True after the first time the span is set
 	CompareResult compareResult; // Result of comparing the current bits to the
-								 // variable value
+								 // span value
 	Item item; // Data for the current item in the graph
 	StringBuilder* sb; // String builder used for trace information
 	Exception* ex; // Current exception instance
@@ -185,9 +184,9 @@ static void traceInt(Cursor* cursor, const char* method, int64_t value) {
 #define IP "IP:" // IP value
 #define LV "LV:" // Low Value
 #define HV "HV:" // High Value
-#define VS "VS:" // Variable Start index
+#define SS "SS:" // Span Start index
 #define CI "CI:" // Cursor Index
-#define VE "VE:" // Variable End index
+#define SE "SE:" // Span End index
 static void traceCompare(Cursor* cursor) {
 	StringBuilderAddChar(cursor->sb, '[');
 	StringBuilderAddInteger(cursor->sb, cursor->bitIndex);
@@ -224,13 +223,13 @@ static void traceCompare(Cursor* cursor) {
 	StringBuilderAddChars(cursor->sb, HV, sizeof(HV) - 1);
 	bytesToBinary(cursor, cursor->spanHigh, cursor->span.length);
 	StringBuilderAddChar(cursor->sb, ' ');
-	StringBuilderAddChars(cursor->sb, VS, sizeof(VS) - 1);
+	StringBuilderAddChars(cursor->sb, SS, sizeof(SS) - 1);
 	StringBuilderAddInteger(cursor->sb, cursor->span.startIndex);
 	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, CI, sizeof(CI) - 1);
 	StringBuilderAddInteger(cursor->sb, cursor->index);
 	StringBuilderAddChar(cursor->sb, ' ');
-	StringBuilderAddChars(cursor->sb, VE, sizeof(VE) - 1);
+	StringBuilderAddChars(cursor->sb, SE, sizeof(SE) - 1);
 	StringBuilderAddInteger(cursor->sb, cursor->span.endIndex);
 	traceNewLine(cursor);
 }
@@ -272,7 +271,7 @@ static void copyBits(byte* dest, const byte* src, int startBit, int bits) {
 }
 
 // Sets the cursor->ipValue to the bits needed to perform an integer comparison
-// operation with the cursor->variable.
+// operation with the cursor->span.
 static void setIpValue(Cursor* cursor) {
 	
 	// Reset the IP value ready to include the new bits.
@@ -363,8 +362,8 @@ static uint32_t setSpanSearch(
 		COLLECTION_RELEASE(collection, item);
 	}
 
-	// The item could not be found so return the index of the variable that
-	// covers the range required.
+	// The item could not be found so return the index of the span that covers 
+	// the range required.
 	return middle;
 }
 
@@ -435,16 +434,16 @@ void setSpanLimits(Cursor* cursor)
 static void setSpan(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 
-	// Check that the current variable is valid and only move if not.
+	// Check that the current span is valid and only move if not.
 	if (cursor->spanSet == true &&
 		cursor->index >= cursor->span.startIndex &&
 		cursor->index <= cursor->span.endIndex) {
 		return;
 	}
 
-	// Use binary search to find the index for the variable. The comparer 
-	// records the last variable checked the cursor will have the correct
-	// variable after the search operation.
+	// Use binary search to find the index for the span. The comparer records
+	// the last span checked the cursor will have the correct span after the 
+	// search operation.
 	uint32_t index = setSpanSearch(
 		cursor->graph->spans,
 		&cursor->item,
@@ -453,8 +452,8 @@ static void setSpan(Cursor* cursor) {
 		cursor,
 		cursor->ex);
 
-	// Validate that the variable set has a start index equal to or greater
-	// than the current cursor position.
+	// Validate that the span set has a start index equal to or greater than
+	// the current cursor position.
 	if (cursor->index < cursor->span.startIndex) {
 		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
 		return;
@@ -483,8 +482,8 @@ static void setSpan(Cursor* cursor) {
 		setSpanLimits(cursor);
 	}
 
-	// Next time the set method is called the check to see if the variable 
-	// needs to be modified can be applied.
+	// Next time the set method is called the check to see if the span needs to
+	// be modified can be applied.
 	cursor->spanSet = true;
 }
 
@@ -605,7 +604,7 @@ static void cursorMove(Cursor* cursor, uint32_t recordIndex) {
 	// Release the data. 
 	cursor->item.collection->release(&cursor->item);
 
-	// Set the correct variable to use for any compare operations.
+	// Set the correct span to use for any compare operations.
 	setSpan(cursor);
 	if (EXCEPTION_FAILED) return;
 }
@@ -751,10 +750,8 @@ static void selectCompleteHigh(Cursor* cursor) {
 	}
 }
 
-/// <summary>
-/// Follows the low entry before taking all the high entries until a leaf is
-/// found.
-/// </summary>
+// Follows the low entry before taking all the high entries until a leaf is
+// found.
 static void selectCompleteLowHigh(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	TRACE_LABEL(cursor, "selectCompleteLowHigh");
@@ -775,9 +772,9 @@ static void selectCompleteLow(Cursor* cursor) {
 	}
 }
 
-// Compares the current variable to the relevant bits in the IP address. The
+// Compares the current span to the relevant bits in the IP address. The
 // comparison varies depending on whether the limit is lower or higher than the
-// equal variable.
+// equal span.
 static void compareIpToSpan(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 
@@ -831,10 +828,10 @@ static uint32_t evaluate(Cursor* cursor) {
 
 	do
 	{
-		// Compare the current cursor bits against the variable value.
+		// Compare the current cursor bits against the span value.
 		compareIpToSpan(cursor);
 
-		// Advance the bits before the variable is then changed.
+		// Advance the bits before the span is then changed.
 		cursor->bitIndex += cursor->span.length;
 
 		switch (cursor->compareResult) {
@@ -955,17 +952,17 @@ static IpiCgArray* ipiGraphCreate(
 		}
 		graphs->count++;
 
-		// Create the collection for the values that form the graph.
-		CollectionHeader headerValues;
+		// Create the collection for the nodes that form the graph.
+		CollectionHeader headerNodes;
 
 		// Must be zero as the count is not measured in bytes.
-		headerValues.count = 0; 
-		headerValues.length = 
+		headerNodes.count = 0; 
+		headerNodes.length = 
 			graphs->items[i].info->nodes.collection.length;
-		headerValues.startPosition = 
+		headerNodes.startPosition = 
 			graphs->items[i].info->nodes.collection.startPosition;
 		graphs->items[i].nodes = collectionCreate(
-			headerValues,
+			headerNodes,
 			state);
 		if (graphs->items[i].nodes == NULL) {
 			EXCEPTION_SET(CORRUPT_DATA);
@@ -1057,7 +1054,10 @@ uint32_t fiftyoneDegreesIpiGraphEvaluate(
 	byte componentId,
 	fiftyoneDegreesIpAddress address,
 	fiftyoneDegreesException* exception) {
+
+	// String builder is not needed for normal usage without tracing.
 	StringBuilder sb = { NULL, 0 };
+
 	return ipiGraphEvaluate(graphs, componentId, address, &sb, exception);
 }
 

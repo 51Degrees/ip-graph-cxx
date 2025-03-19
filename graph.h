@@ -19,7 +19,7 @@
  * in the end user terms of the application under an appropriate heading, 
  * such notice(s) shall fulfill the requirements of that article.
  * 
- * [TODO INSERT PATENT NOTICE]
+ * [TODO INSERT PATENT NOTICE AND WIPE REPO HISTORY]
  * 
  * ********************************************************************* */
 
@@ -50,6 +50,49 @@
  *
  * All the functions specific to the IP Intelligence Graph.
  * @{
+ * 
+ * Evaluates an IP address and component id to determine the index associated 
+ * with the profile or profile group from the related component.
+ *
+ * ## Overview
+ *
+ * fiftyoneDegreesIpiGraphCreateFrom[Memory|File] should be used to create an
+ * array of component graph information records from a suitable data source.
+ * 
+ * This array is past to the fiftyoneDegreesIpiGraphEvaluate function along
+ * with the IP address and the id of the component required. The following code
+ * would be used to obtain the result for component id 1 and IP address 
+ * 51.51.51.51.
+ * 
+ *	Exception exception;
+ *	uint32_t result = 0;
+ *	const char* ipAddress = "51.51.51.51";
+ *	IpAddress parsedIpAddress;
+ *	parsedIpAddress.type = 0;
+ *	if (IpAddressParse(
+ *		ipAddress,
+ *		ipAddress + sizeof(ipAddress), 
+ *		&parsedIpAddress)) {
+ *		result = fiftyoneDegreesIpiGraphEvaluate(
+ *			wrapper->array,
+ *			(byte)1,
+ *			parsedIpAddress,	
+ *			&exception);
+ *	}
+ * 
+ * The IP address is parsed from a string into a IpAddress instance using the
+ * common-cxx IP functions.
+ * 
+ * The array created must be freed with the fiftyoneDegreesIpiGraphFree method
+ * when finished with.
+ * 
+ * ## Note
+ * 
+ * The methods marked trace are for 51Degrees internal purposes and are not
+ * intended for production usage.
+ * 
+ * Associated tests are not provided as open source. Contact
+ * support@51degrees.com if more information is required.
  */
 
 #if !defined(DEBUG) && !defined(_DEBUG) && !defined(NDEBUG)
@@ -87,12 +130,12 @@ typedef struct fiftyone_degrees_ipi_cg_member_collection_t {
  * Data structure used for the values collection.
  */
 #pragma pack(push, 1)
-typedef struct fiftyone_degrees_ipi_cg_member_value_t {
+typedef struct fiftyone_degrees_ipi_cg_member_node_t {
 	fiftyoneDegreesIpiCgMemberCollection collection;
 	uint16_t recordSize; /**< Number of bits that form the value record */
 	fiftyoneDegreesIpiCgMember lowFlag; /**< Bit for the low flag */
 	fiftyoneDegreesIpiCgMember value; /**< Bits for the value */
-} fiftyoneDegreesIpiCgMemberValue;
+} fiftyoneDegreesIpiCgMemberNode;
 #pragma pack(pop)
 
 /**
@@ -112,7 +155,7 @@ typedef struct fiftyone_degrees_ipi_cg_info_t {
 						 structure for the graph. */
 	fiftyoneDegreesIpiCgMemberCollection spanBytes;
 	fiftyoneDegreesIpiCgMemberCollection spans;
-	fiftyoneDegreesIpiCgMemberValue nodes;
+	fiftyoneDegreesIpiCgMemberNode nodes;
 } fiftyoneDegreesIpiCgInfo;
 #pragma pack(pop)
 
@@ -125,7 +168,7 @@ typedef struct fiftyone_degrees_ipi_cg_t {
 	fiftyoneDegreesCollection* nodes; /**< Nodes collection */
 	fiftyoneDegreesCollection* spans; /**< Spans collection */
 	fiftyoneDegreesCollection* spanBytes; /**< Span bytes collection */
-	uint32_t spansCount; /**< Number of variables available */
+	uint32_t spansCount; /**< Number of spans available */
 	fiftyoneDegreesCollectionItem itemInfo; /**< Handle for info */
 } fiftyoneDegreesIpiCg;
 
