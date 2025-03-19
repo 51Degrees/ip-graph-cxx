@@ -91,8 +91,8 @@
  * The methods marked trace are for 51Degrees internal purposes and are not
  * intended for production usage.
  * 
- * Associated tests are not provided as open source. Contact
- * support@51degrees.com if more information is required.
+ * Associated tests are not provided as open source. Contact 51Degrees if more
+ * information is required.
  */
 
 #if !defined(DEBUG) && !defined(_DEBUG) && !defined(NDEBUG)
@@ -153,6 +153,15 @@ typedef struct fiftyone_degrees_ipi_cg_info_t {
 	byte componentId; /**< The component id the graph relates to. */
 	uint32_t graphIndex; /**< The index to the entry record in the header data
 						 structure for the graph. */
+	uint32_t firstProfileIndex; /**< The index to the entry record in the 
+								header data structure for the graph. */
+	uint32_t profileCount; /**< The total number of profiles (not group 
+						   profiles) pointed to by the leaf nodes of the graph.
+						   */
+	uint32_t firstProfileGroupIndex; /**< The index to the entry record in the
+								header data structure for the graph. */
+	uint32_t profileGroupCount; /**< The total number of profile groups
+								pointed to by the leaf nodes of the graph */
 	fiftyoneDegreesIpiCgMemberCollection spanBytes;
 	fiftyoneDegreesIpiCgMemberCollection spans;
 	fiftyoneDegreesIpiCgMemberNode nodes;
@@ -171,6 +180,26 @@ typedef struct fiftyone_degrees_ipi_cg_t {
 	uint32_t spansCount; /**< Number of spans available */
 	fiftyoneDegreesCollectionItem itemInfo; /**< Handle for info */
 } fiftyoneDegreesIpiCg;
+
+/**
+ * The evaluation result from graph collection.
+ */
+typedef struct fiftyone_degrees_ipi_cg_result_t {
+	uint32_t rawOffset; /**< Raw offset as returned by the graph (without 
+						mapping applied) */
+	uint32_t offset; /**< Offset in profileOffset or profileGroups collection 
+					 */
+	bool isGroupOffset; /**< If offset is for a profile group */
+} fiftyoneDegreesIpiCgResult;
+
+/**
+ * Default value for fiftyoneDegreesIpiCgResult
+ */
+#define FIFTYONE_DEGREES_IPI_CG_RESULT_DEFAULT (fiftyoneDegreesIpiCgResult){ \
+	0, \
+	0, \
+	false \
+}
 
 /**
  * An array of all the component graphs and collections available.
@@ -226,9 +255,9 @@ EXTERNAL fiftyoneDegreesIpiCgArray* fiftyoneDegreesIpiGraphCreateFromFile(
  * @param address IP address to return a profile index for
  * @param exception pointer to an exception data structure to be used if an
  * exception occurs. See exceptions.h.
- * @return the index of the profile associated with the IP address.
+ * @return the index of the profile (or group) associated with the IP address.
  */
-EXTERNAL uint32_t fiftyoneDegreesIpiGraphEvaluate(
+EXTERNAL fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluate(
 	fiftyoneDegreesIpiCgArray* graphs,
 	byte componentId,
 	fiftyoneDegreesIpAddress address,
@@ -245,9 +274,9 @@ EXTERNAL uint32_t fiftyoneDegreesIpiGraphEvaluate(
  * @param length of the buffer
  * @param exception pointer to an exception data structure to be used if an
  * exception occurs. See exceptions.h.
- * @return the index of the profile associated with the IP address.
+ * @return the index of the profile (or group) associated with the IP address.
  */
-EXTERNAL uint32_t fiftyoneDegreesIpiGraphEvaluateTrace(
+EXTERNAL fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluateTrace(
 	fiftyoneDegreesIpiCgArray* graphs,
 	byte componentId,
 	fiftyoneDegreesIpAddress address,

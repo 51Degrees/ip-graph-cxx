@@ -382,6 +382,7 @@ static int compareBytes(byte* first, byte* second, int bits) {
 	return 0;
 }
 
+// Set the span low and high limits from the bytes.
 static void setSpanBytes(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	
@@ -609,55 +610,14 @@ static void cursorMove(Cursor* cursor, uint32_t recordIndex) {
 	if (EXCEPTION_FAILED) return;
 }
 
-// Moves the cursor to the next entry.
-static void cursorMoveNext(Cursor* cursor) {
-	cursorMove(cursor, cursor->index + 1);
-}
-
-// Moves the cursor to the previous entry.
-static void cursorMovePrevious(Cursor* cursor) {
-	cursorMove(cursor, cursor->index - 1);
-}
-
 // Moves the cursor to the entry indicated by the current entry.
 static void cursorMoveTo(Cursor* cursor) {
 	cursorMove(cursor, (uint32_t)getValue(cursor));
 }
 
-// Moves the cursor to the next low entry from the current position.
-static void cursorMoveLow(Cursor* cursor) {
-	Exception* exception = cursor->ex;
-	
-	// If the low flag is set then the entry points to the next low entry.
-	// Move to it.
-	if (isLowFlag(cursor)) {
-
-		// The low entry is a branch so move to it.
-		cursorMoveTo(cursor);
-		if (EXCEPTION_FAILED) return;
-	}
-
-	// If the low flag is not set then the next low entry is the next 
-	// consecutive entry. Move to the next entry.
-	else {
-		cursorMoveNext(cursor);
-		if (EXCEPTION_FAILED) return;
-	}
-}
-
-// Moves the cursor to the next high entry from the current position.
-static void cursorMoveHigh(Cursor* cursor) {
-	Exception* exception = cursor->ex;
-
-	// If the low flag is set then the next entry is the high entry.
-	if (isLowFlag(cursor)) {
-		cursorMoveNext(cursor);
-		if (EXCEPTION_FAILED) return;
-	}
-
-	// Follow the high entry.
-	cursorMoveTo(cursor);
-	if (EXCEPTION_FAILED) return;
+// Moves the cursor to the next entry.
+static void cursorMoveNext(Cursor* cursor) {
+	cursorMove(cursor, cursor->index + 1);
 }
 
 // Creates a cursor ready for evaluation with the graph and IP address.
@@ -864,13 +824,39 @@ static uint32_t evaluate(Cursor* cursor) {
 	return getProfileIndex(cursor);
 }
 
-static uint32_t ipiGraphEvaluate(
+// Applies profile mappings from graph info to evaluation result.
+// profileIndex - Value returned by the graph.
+// graph - Graph that returned the value.
+// Returns the mapped profile/group offset and type flag.
+static fiftyoneDegreesIpiCgResult toResult(
+	const uint32_t profileIndex,
+	const IpiCg * const graph) {
+	fiftyoneDegreesIpiCgResult result = {
+		profileIndex,
+		0,
+		false,
+	};
+	if (profileIndex < graph->info->profileCount) {
+		result.offset = profileIndex + graph->info->firstProfileIndex;
+	}
+	else {
+		const uint32_t groupIndex = profileIndex - graph->info->profileCount;
+		if (groupIndex < graph->info->profileGroupCount) {
+			result.offset = groupIndex + graph->info->firstProfileGroupIndex;
+			result.isGroupOffset = true;
+		}
+	}
+	return result;
+}
+
+static fiftyoneDegreesIpiCgResult ipiGraphEvaluate(
 	fiftyoneDegreesIpiCgArray* graphs,
 	byte componentId,
 	fiftyoneDegreesIpAddress address,
 	StringBuilder* sb,
 	fiftyoneDegreesException* exception) {
 	uint32_t profileIndex = 0;
+	fiftyoneDegreesIpiCgResult result = FIFTYONE_DEGREES_IPI_CG_RESULT_DEFAULT;
 	IpiCg* graph;
 	for (uint32_t i = 0; i < graphs->count; i++) {
 		graph = &graphs->items[i];
@@ -878,12 +864,13 @@ static uint32_t ipiGraphEvaluate(
 			componentId == graph->info->componentId) {
 			Cursor cursor = cursorCreate(graph, address, sb, exception);
 			profileIndex = evaluate(&cursor);
-			if (EXCEPTION_FAILED) return 0;
+			if (EXCEPTION_FAILED) return result;
 			TRACE_RESULT(&cursor, profileIndex);
+			result = toResult(profileIndex, graph);
 			break;
 		}
 	}
-	return profileIndex;
+	return result;
 }
 
 // Graph headers might be duplicated across different graphs. As such the 
@@ -910,13 +897,19 @@ static Collection* ipiGraphCreateFromFile(
 static Collection* ipiGraphCreateFromMemory(
 	CollectionHeader header, 
 	void* state) {
-	MemoryReader* reader = (MemoryReader*)state;
-	byte* current = reader->current;
-	reader->current = reader->startByte + header.startPosition;
+	MemoryReader* const reader = (MemoryReader*)state;
+	byte* const current = reader->current;
+	byte* const target = reader->startByte + header.startPosition;
+	const bool shouldRestore = current != target;
+	if (shouldRestore) {
+		reader->current = target;
+	}
 	Collection* collection = CollectionCreateFromMemory(
 		(MemoryReader*)state,
 		header);
-	reader->current = current;
+	if (shouldRestore) {
+		reader->current = current;
+	}
 	return collection;
 }
 
@@ -1049,7 +1042,7 @@ fiftyoneDegreesIpiCgArray* fiftyoneDegreesIpiGraphCreateFromFile(
 		exception);
 }
 
-uint32_t fiftyoneDegreesIpiGraphEvaluate(
+fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluate(
 	fiftyoneDegreesIpiCgArray* graphs,
 	byte componentId,
 	fiftyoneDegreesIpAddress address,
@@ -1061,7 +1054,7 @@ uint32_t fiftyoneDegreesIpiGraphEvaluate(
 	return ipiGraphEvaluate(graphs, componentId, address, &sb, exception);
 }
 
-uint32_t fiftyoneDegreesIpiGraphEvaluateTrace(
+fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluateTrace(
 	fiftyoneDegreesIpiCgArray* graphs,
 	byte componentId,
 	fiftyoneDegreesIpAddress address,
@@ -1069,7 +1062,7 @@ uint32_t fiftyoneDegreesIpiGraphEvaluateTrace(
 	int const length,
 	fiftyoneDegreesException* exception) {
 	StringBuilder sb = { buffer, length };
-	uint32_t result = ipiGraphEvaluate(
+	const fiftyoneDegreesIpiCgResult result = ipiGraphEvaluate(
 		graphs, 
 		componentId, 
 		address, 
