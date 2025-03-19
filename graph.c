@@ -38,9 +38,11 @@ MAP_TYPE(Collection)
  */
 typedef enum {
 	NO_COMPARE,
+	LESS_THAN_LOW,
 	EQUAL_LOW,
 	INBETWEEN,
 	EQUAL_HIGH,
+	GREATER_THAN_HIGH
 } CompareResult;
 
 // Number of bytes that can form an IP value or span lmiit.
@@ -116,18 +118,23 @@ typedef struct cursor_t {
 #define TRACE_RESULT(c,r)
 #endif
 
-// Outputs to the string builder the bits from high to low order for the bytes
+// Get the bit as a bool for the byte array and bit index from the left. High
+// order bit is index 0.
+#define GET_BIT(b,i) ((b[(i) / 8] & (1 << (7 - ((i) % 8)))) != 0)
+
+// Sets the bit in the destination byte array where the bit index is from 
+// left. High order bit is index 0.
+#define SET_BIT(b,i) (b[i / 8] |= 1 << (7 - (i % 8)))
+
+// Outputs to the string builder the bits from left to right from the bytes
 // provided.
-static void bytesToBinary(Cursor* cursor, byte bytes[VAR_SIZE], int length) {
+static void bytesToBinary(Cursor* cursor, byte* bytes, int length) {
 	int count = 0;
-	for (int i = length - 1; i >= 0; i--)
+	for (int i = 0; i < length; i++)
 	{
-		int current = bytes[i / 8];
-		int bitIndex = 7 - (i % 8);
-		int bit = (current & (1 << bitIndex)) != 0;
-		StringBuilderAddChar(cursor->sb, bit ? '1' : '0');
+		StringBuilderAddChar(cursor->sb, GET_BIT(bytes, i) ? '1' : '0');
 		count++;
-		if (count % 4 == 0 && i > 0) {
+		if (count % 4 == 0 && count < length) {
 			StringBuilderAddChar(cursor->sb, ' ');
 		}
 	}
@@ -170,9 +177,12 @@ static void traceInt(Cursor* cursor, const char* method, int64_t value) {
 	traceNewLine(cursor);
 }
 
+#define CLTL "LESS_THAN_LOW"
 #define CEL "EQUAL_LOW"
 #define CIB "INBETWEEN"
 #define CEH "EQUAL_HIGH"
+#define CGTH "GREATER_THAN_HIGH"
+#define NC "NO_COMPARE"
 #define IP "IP:" // IP value
 #define LV "LV:" // Low Value
 #define HV "HV:" // High Value
@@ -186,6 +196,9 @@ static void traceCompare(Cursor* cursor) {
 	StringBuilderAddChar(cursor->sb, '=');
 	switch (cursor->compareResult)
 	{
+	case LESS_THAN_LOW:
+		StringBuilderAddChars(cursor->sb, CLTL, sizeof(CLTL) - 1);
+		break;
 	case EQUAL_LOW:
 		StringBuilderAddChars(cursor->sb, CEL, sizeof(CEL) - 1);
 		break;
@@ -194,6 +207,12 @@ static void traceCompare(Cursor* cursor) {
 		break;
 	case EQUAL_HIGH:
 		StringBuilderAddChars(cursor->sb, CEH, sizeof(CEH) - 1);
+		break;
+	case GREATER_THAN_HIGH:
+		StringBuilderAddChars(cursor->sb, CGTH, sizeof(CGTH) - 1);
+		break;
+	case NO_COMPARE:
+		StringBuilderAddChars(cursor->sb, NC, sizeof(NC) - 1);
 		break;
 	}
 	StringBuilderAddChar(cursor->sb, ' ');
@@ -238,12 +257,17 @@ static IpType getIpTypeFromVersion(byte version) {
 
 // Resets the bytes to zero.
 static void resetBytes(byte* bytes) {
-	for (int i = 0; i < VAR_SIZE; i++) {
-		if (bytes[i] != 0) {
-			bytes[i] = 0;
-		}
-		else {
-			break;
+	memset(bytes, 0, sizeof(VAR_SIZE));
+}
+
+// Copies bits from the source to the destination starting at the start bit in
+// the source provided and including the subsequent bits.
+static void copyBits(byte* dest, const byte* src, int startBit, int bits) {
+	for (int i = 0, s = startBit; i < bits; i++, s++) {
+
+		// If 1 then set the bit in the destination.
+		if (GET_BIT(src, s)) {
+			SET_BIT(dest, i);
 		}
 	}
 }
@@ -255,21 +279,12 @@ static void setIpValue(Cursor* cursor) {
 	// Reset the IP value ready to include the new bits.
 	resetBytes(cursor->ipValue);
 
-	// Extract cursor->variableLength bits from cursor->bitIndex.
-	for (byte i = 0; i < cursor->span.length; i++) {
-
-		byte currentIpBitIndex = cursor->bitIndex + i;
-		byte byteIndex = currentIpBitIndex / 8;
-		byte bitInIp = currentIpBitIndex % 8;
-		byte* valueByte = &cursor->ipValue[i / 8];
-
-		// Shift the current byte so that the target bit is in the LSB, then 
-		// mask it.
-		byte bit = (cursor->ip.value[byteIndex] >> (7 - bitInIp)) & 1;
-
-		// Shift result left to make room for this new bit, then add it.
-		*valueByte = (*valueByte << 1) | bit;
-	}
+	// Copy the bits from the IP address to the compare field.
+	copyBits(
+		cursor->ipValue, 
+		cursor->ip.value, 
+		cursor->bitIndex,
+		cursor->span.length);
 }
 
 // True if all the bytes of the address have been consumed.
@@ -354,18 +369,19 @@ static uint32_t setSpanSearch(
 	return middle;
 }
 
-// Copies bits from the source to the destination starting at the start bit in
-// the source provided and including the subsequent bits.
-static void copyBits(byte* dest, byte* src, int startBit, int bits) {
-	for (int i = 0, s = startBit; i < bits; i++, s++) {
-		byte srcByte = src[s / 8];
-		int srcBitIndex = 7 - (s % 8);
-		byte srcBit = srcByte & (1 << srcBitIndex);
-		if (srcBit) {
-			byte destByte = src[i / 8];
-			destByte |= 1 << (7 - (i % 8));
+// If the bytes of first and second that are needed to cover the bits are equal
+// returns true, otherwise false.
+static int compareBytes(byte* first, byte* second, int bits) {
+	int bytes = (bits / 8) + (bits % 8 != 0 ? 1 : 0);
+	for (int i = 0; i < bytes; i++) {
+		if (first[i] < second[i]) {
+			return -1;
+		}
+		if (first[i] > second[i]) {
+			return 1;
 		}
 	}
+	return 0;
 }
 
 static void setSpanBytes(Cursor* cursor) {
@@ -387,11 +403,19 @@ static void setSpanBytes(Cursor* cursor) {
 		cursor->span.length);
 	copyBits(
 		cursor->spanHigh,
-		bytes, 
+		bytes,
 		cursor->span.length, 
 		cursor->span.length);
 
 	COLLECTION_RELEASE(cursor->graph->spanBytes, &cursor->item);
+
+	if (compareBytes(
+		cursor->spanLow, 
+		cursor->spanHigh, 
+		cursor->span.length) >= 0) {
+		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
+		return;
+	}
 }
 
 // Copies the two bytes for the low and high limits.
@@ -454,6 +478,7 @@ static void setSpan(Cursor* cursor) {
 	resetBytes(cursor->spanHigh);
 	if (cursor->span.length > 16) {
 		setSpanBytes(cursor);
+		if (EXCEPTION_FAILED) return;
 	}
 	else {
 		setSpanLimits(cursor);
@@ -718,10 +743,8 @@ static bool selectHigh(Cursor* cursor) {
 	return false;
 }
 
-/// <summary>
-/// Moves the cursor back to the prior high entry, then follows the low entries
-/// until a leaf is found.
-/// </summary>
+// Moves the cursor back to the prior high entry, then follows the low entries
+// until a leaf is found.
 static void selectCompleteHigh(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	TRACE_LABEL(cursor, "selectCompleteHigh");
@@ -754,10 +777,8 @@ static bool cursorMoveBack(Cursor* cursor) {
 	return selectLow(cursor);
 }
 
-/// <summary>
-/// Moves the cursor back to the prior low entry, then follows the high entries
-/// until a leaf is found.
-/// </summary>
+// Moves the cursor back to the prior low entry, then follows the high entries
+// until a leaf is found.
 static void selectCompleteLow(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	TRACE_LABEL(cursor, "selectCompleteLow");
@@ -767,21 +788,6 @@ static void selectCompleteLow(Cursor* cursor) {
 			if (EXCEPTION_FAILED) return;
 		}
 	}
-}
-
-// If the bytes of first and second that are needed to cover the bits are equal
-// returns true, otherwise false.
-static bool compareBytes(
-	byte first[VAR_SIZE], 
-	byte second[VAR_SIZE], 
-	int bits) {
-	int bytes = (bits / 8) + (bits % 8 != 0 ? 1 : 0);
-	for (int i = 0; i < bytes; i++) {
-		if (first[i] != second[i]) {
-			return false;
-		}
-	}
-	return true;
 }
 
 // Compares the current variable to the relevant bits in the IP address. The
@@ -795,20 +801,33 @@ static void compareIpToSpan(Cursor* cursor) {
 	setIpValue(cursor); 
 
 	// Set the comparison result.
-	if (compareBytes(
+	int lowCompare = compareBytes(
 		cursor->ipValue,
-		cursor->spanLow, 
-		cursor->span.length)) {
+		cursor->spanLow,
+		cursor->span.length);
+	int highCompare = compareBytes(
+		cursor->ipValue,
+		cursor->spanHigh,
+		cursor->span.length);
+	if (lowCompare < 0) {
+		cursor->compareResult = LESS_THAN_LOW;
+	}
+	else if (lowCompare == 0) {
 		cursor->compareResult = EQUAL_LOW;
 	}
-	else if (compareBytes(
-		cursor->ipValue, 
-		cursor->spanHigh, 
-		cursor->span.length)) {
+	else if (lowCompare > 0 && highCompare < 0)
+	{
+		cursor->compareResult = INBETWEEN;
+	}
+	else if (highCompare == 0) {
 		cursor->compareResult = EQUAL_HIGH;
 	}
+	else if (highCompare > 0) {
+		cursor->compareResult = GREATER_THAN_HIGH;
+	}
 	else {
-		cursor->compareResult = INBETWEEN;
+		// Should never happen.
+		cursor->compareResult = NO_COMPARE;
 	}
 
 	// If tracing enabled output the results.
@@ -834,6 +853,11 @@ static uint32_t evaluate(Cursor* cursor) {
 		cursor->bitIndex += cursor->span.length;
 
 		switch (cursor->compareResult) {
+		case LESS_THAN_LOW:
+			selectCompleteLow(cursor);
+			if (EXCEPTION_FAILED) return 0;
+			found = true;
+			break;
 		case EQUAL_LOW:
 			found = selectLow(cursor);
 			if (EXCEPTION_FAILED) return 0;
@@ -846,6 +870,11 @@ static uint32_t evaluate(Cursor* cursor) {
 		case EQUAL_HIGH:
 			found = selectHigh(cursor);
 			if (EXCEPTION_FAILED) return 0;
+			break;
+		case GREATER_THAN_HIGH:
+			selectCompleteHigh(cursor);
+			if (EXCEPTION_FAILED) return 0;
+			found = true;
 			break;
 		}
 
