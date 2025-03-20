@@ -836,6 +836,9 @@ static uint32_t evaluate(Cursor* cursor) {
 			if (EXCEPTION_FAILED) return 0;
 			found = true;
 			break;
+		default:
+			EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
+			return UINT32_MAX;
 		}
 
  	} while (found == false && isExhausted(cursor) == false);
