@@ -19,7 +19,7 @@
  * in the end user terms of the application under an appropriate heading, 
  * such notice(s) shall fulfill the requirements of that article.
  * 
- * [TODO INSERT PATENT NOTICE]
+ * [TODO INSERT PATENT NOTICE AND WIPE REPO HISTORY]
  * 
  * ********************************************************************* */
 
@@ -39,26 +39,10 @@
 #endif
 #include "../common-cxx/data.h"
 #include "../common-cxx/exceptions.h"
-#include "../common-cxx/threading.h"
-#include "../common-cxx/file.h"
 #include "../common-cxx/collection.h"
-#include "../common-cxx/evidence.h"
 #include "../common-cxx/list.h"
-#include "../common-cxx/resource.h"
-#include "../common-cxx/properties.h"
 #include "../common-cxx/status.h"
-#include "../common-cxx/date.h"
-#include "../common-cxx/pool.h"
-#include "../common-cxx/component.h"
-#include "../common-cxx/property.h"
-#include "../common-cxx/value.h"
-#include "../common-cxx/profile.h"
-#include "../common-cxx/overrides.h"
-#include "../common-cxx/config.h"
-#include "../common-cxx/dataset.h"
 #include "../common-cxx/array.h"
-#include "../common-cxx/results.h"
-#include "../common-cxx/float.h"
 
  /**
  * @ingroup FiftyOneDegreesIpIntelligence
@@ -66,6 +50,49 @@
  *
  * All the functions specific to the IP Intelligence Graph.
  * @{
+ * 
+ * Evaluates an IP address and component id to determine the index associated 
+ * with the profile or profile group from the related component.
+ *
+ * ## Overview
+ *
+ * fiftyoneDegreesIpiGraphCreateFrom[Memory|File] should be used to create an
+ * array of component graph information records from a suitable data source.
+ * 
+ * This array is past to the fiftyoneDegreesIpiGraphEvaluate function along
+ * with the IP address and the id of the component required. The following code
+ * would be used to obtain the result for component id 1 and IP address 
+ * 51.51.51.51.
+ * 
+ *	Exception exception;
+ *	uint32_t result = 0;
+ *	const char* ipAddress = "51.51.51.51";
+ *	IpAddress parsedIpAddress;
+ *	parsedIpAddress.type = 0;
+ *	if (IpAddressParse(
+ *		ipAddress,
+ *		ipAddress + sizeof(ipAddress), 
+ *		&parsedIpAddress)) {
+ *		result = fiftyoneDegreesIpiGraphEvaluate(
+ *			wrapper->array,
+ *			(byte)1,
+ *			parsedIpAddress,	
+ *			&exception);
+ *	}
+ * 
+ * The IP address is parsed from a string into a IpAddress instance using the
+ * common-cxx IP functions.
+ * 
+ * The array created must be freed with the fiftyoneDegreesIpiGraphFree method
+ * when finished with.
+ * 
+ * ## Note
+ * 
+ * The methods marked trace are for 51Degrees internal purposes and are not
+ * intended for production usage.
+ * 
+ * Associated tests are not provided as open source. Contact 51Degrees if more
+ * information is required.
  */
 
 #if !defined(DEBUG) && !defined(_DEBUG) && !defined(NDEBUG)
@@ -82,11 +109,33 @@
  */
 #pragma pack(push, 1)
 typedef struct fiftyone_degrees_ipi_cg_member_t {
-	uint64_t mask; /**< Mask applied to a node record to obtain the members
-				   bits */
+	uint64_t mask; /**< Mask applied to a record to obtain the members bits */
 	uint64_t shift; /**< Left shift to apply to the result of the mask to
 				    obtain the value */
 } fiftyoneDegreesIpiCgMember;
+#pragma pack(pop)
+
+/**
+ * Collection header information for graph collections.
+ */
+#pragma pack(push, 1)
+typedef struct fiftyone_degrees_ipi_cg_member_collection_t {
+	uint32_t length; /**< Number of bytes that form the collection */
+	uint32_t count; /**< Number of bit packed records in the collection */
+	uint32_t startPosition; /**< Position of the first collection byte */
+} fiftyoneDegreesIpiCgMemberCollection;
+#pragma pack(pop)
+
+/**
+ * Data structure used for the values collection.
+ */
+#pragma pack(push, 1)
+typedef struct fiftyone_degrees_ipi_cg_member_node_t {
+	fiftyoneDegreesIpiCgMemberCollection collection;
+	uint16_t recordSize; /**< Number of bits that form the value record */
+	fiftyoneDegreesIpiCgMember lowFlag; /**< Bit for the low flag */
+	fiftyoneDegreesIpiCgMember value; /**< Bits for the value */
+} fiftyoneDegreesIpiCgMemberNode;
 #pragma pack(pop)
 
 /**
@@ -96,33 +145,26 @@ typedef struct fiftyone_degrees_ipi_cg_member_t {
  */
 #pragma pack(push, 1)
 typedef struct fiftyone_degrees_ipi_cg_info_t {
-	uint64_t graphLength; /**< Number of bytes that form the complete graph */
-	uint32_t graphCount; /**< Number of records in the graph array */
-	uint64_t graphStartPosition; /**< Position of the first byte of the graph */
 	byte version; /**< IP address version (4 or 6). The reason byte is used
 				  instead of fiftyoneDegreesIpEvidenceType, is that enum is not
 			      necessarily a fixed size, so the struct may not always map to
 				  the data file. The value can still be cast to the enum type
 				  fiftyoneDegreesIpEvidenceType */
 	byte componentId; /**< The component id the graph relates to. */
-	byte recordSize; /**< The number of bits per fixed width node. Never more
-					 than 64 bits. */
-	uint64_t graphIndex; /**< The index to the entry record in the header data
+	uint32_t graphIndex; /**< The index to the entry record in the header data
 						 structure for the graph. */
-	uint32_t firstProfileIndex; /**< The index to the entry record in the header data
-								structure for the graph. */
-	uint32_t profileCount; /**< The total number of profiles (not group profiles)
-						   pointed to by the leaf nodes of the graph. */
-	uint32_t firstProfileGroupIndex; /**< The index to the entry record in the header data
-							    structure for the graph. */
+	uint32_t firstProfileIndex; /**< The index to the entry record in the 
+								header data structure for the graph. */
+	uint32_t profileCount; /**< The total number of profiles (not group 
+						   profiles) pointed to by the leaf nodes of the graph.
+						   */
+	uint32_t firstProfileGroupIndex; /**< The index to the entry record in the
+								header data structure for the graph. */
 	uint32_t profileGroupCount; /**< The total number of profile groups
 								pointed to by the leaf nodes of the graph */
-	fiftyoneDegreesIpiCgMember zeroFlag; /**< Single bit to indicate if the node
-									     is zero leaf */
-	fiftyoneDegreesIpiCgMember zeroSkip; /**< Bits used to obtain the zero skip */
-	fiftyoneDegreesIpiCgMember oneSkip; /**< Bits used to obtain the one skip */
-	fiftyoneDegreesIpiCgMember value; /**< Bits used to obtain node positive
-									  value for next node or profile */
+	fiftyoneDegreesIpiCgMemberCollection spanBytes;
+	fiftyoneDegreesIpiCgMemberCollection spans;
+	fiftyoneDegreesIpiCgMemberNode nodes;
 } fiftyoneDegreesIpiCgInfo;
 #pragma pack(pop)
 
@@ -132,7 +174,10 @@ typedef struct fiftyone_degrees_ipi_cg_info_t {
  */
 typedef struct fiftyone_degrees_ipi_cg_t {
 	fiftyoneDegreesIpiCgInfo* info;
-	fiftyoneDegreesCollection* collection;
+	fiftyoneDegreesCollection* nodes; /**< Nodes collection */
+	fiftyoneDegreesCollection* spans; /**< Spans collection */
+	fiftyoneDegreesCollection* spanBytes; /**< Span bytes collection */
+	uint32_t spansCount; /**< Number of spans available */
 	fiftyoneDegreesCollectionItem itemInfo; /**< Handle for info */
 } fiftyoneDegreesIpiCg;
 
@@ -140,8 +185,10 @@ typedef struct fiftyone_degrees_ipi_cg_t {
  * The evaluation result from graph collection.
  */
 typedef struct fiftyone_degrees_ipi_cg_result_t {
-	uint32_t rawOffset; /**< Raw offset as returned by the graph (without mapping applied) */
-	uint32_t offset; /**< Offset in profileOffset or profileGroups collection */
+	uint32_t rawOffset; /**< Raw offset as returned by the graph (without 
+						mapping applied) */
+	uint32_t offset; /**< Offset in profileOffset or profileGroups collection 
+					 */
 	bool isGroupOffset; /**< If offset is for a profile group */
 } fiftyoneDegreesIpiCgResult;
 
@@ -149,8 +196,8 @@ typedef struct fiftyone_degrees_ipi_cg_result_t {
  * Default value for fiftyoneDegreesIpiCgResult
  */
 #define FIFTYONE_DEGREES_IPI_CG_RESULT_DEFAULT (fiftyoneDegreesIpiCgResult){ \
-	0, \
-	0, \
+	UINT32_MAX, \
+	UINT32_MAX, \
 	false \
 }
 
