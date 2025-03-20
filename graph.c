@@ -78,7 +78,7 @@ typedef struct span_t {
 	union {
 		uint32_t offset; // Offset to the span bytes
 		SpanLimits limits; // Array of 2x2 bytes
-	};
+	} trail;
 } Span;
 #pragma pack(pop)
 
@@ -299,6 +299,10 @@ static int setSpanComparer(
 	Item* item,
 	long curIndex,
 	Exception* exception) {
+#	ifdef _MSC_VER
+	UNREFERENCED_PARAMETER(curIndex);
+	UNREFERENCED_PARAMETER(exception);
+#	endif
 	Span* span = (Span*)item->data.ptr;
 
 	// Store a copy of the span in the cursor to avoid needing to fetch it
@@ -390,7 +394,7 @@ static void setSpanBytes(Cursor* cursor) {
 	// Use the current span offset to get the bytes.
 	byte* bytes = cursor->graph->spanBytes->get(
 		cursor->graph->spanBytes,
-		cursor->span.offset,
+		cursor->span.trail.offset,
 		&cursor->item,
 		cursor->ex);
 	if (EXCEPTION_FAILED) return;
@@ -423,12 +427,12 @@ void setSpanLimits(Cursor* cursor)
 {
 	memcpy(
 		&cursor->spanLow,
-		&cursor->span.limits.low,
-		sizeof(cursor->span.limits.low));
+		&cursor->span.trail.limits.low,
+		sizeof(cursor->span.trail.limits.low));
 	memcpy(
 		&cursor->spanHigh,
-		&cursor->span.limits.high,
-		sizeof(cursor->span.limits.high));
+		&cursor->span.trail.limits.high,
+		sizeof(cursor->span.trail.limits.high));
 }
 
 // Sets the cursor span to the correct settings for the current node 
@@ -751,8 +755,6 @@ static void selectCompleteLow(Cursor* cursor) {
 // comparison varies depending on whether the limit is lower or higher than the
 // equal span.
 static void compareIpToSpan(Cursor* cursor) {
-	Exception* exception = cursor->ex;
-
 	// Set the cursor->ipValue to the required bits from the IP address for
 	// numeric comparison.
 	setIpValue(cursor); 
