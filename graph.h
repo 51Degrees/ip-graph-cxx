@@ -196,8 +196,8 @@ typedef struct fiftyone_degrees_ipi_cg_result_t {
  * Default value for fiftyoneDegreesIpiCgResult
  */
 #define FIFTYONE_DEGREES_IPI_CG_RESULT_DEFAULT (fiftyoneDegreesIpiCgResult){ \
-	0, \
-	0, \
+	UINT32_MAX, \
+	UINT32_MAX, \
 	false \
 }
 
