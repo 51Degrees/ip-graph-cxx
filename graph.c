@@ -72,13 +72,11 @@ typedef struct span_limits_t {
 // Structure for the span.
 #pragma pack(push, 1)
 typedef struct span_t {
-	uint32_t startIndex; // Inclusive start index in the nodes collection.
-	uint32_t endIndex; // Inclusive end index in the nodes collection.
 	byte length; // Bit length of the low and high limits
 	union {
 		uint32_t offset; // Offset to the span bytes
 		SpanLimits limits; // Array of 2x2 bytes
-	} trail;
+	};
 } Span;
 #pragma pack(pop)
 
@@ -92,6 +90,7 @@ typedef struct cursor_t {
 	uint64_t current; // The value of the current item in the graph
 	uint32_t index; // The current index in the graph values collection
 	uint32_t previousHighIndex; // The index of the last high index
+	uint32_t spanIndex; // The current span index
 	Span span; // The current span that relates to the record index
 	byte spanLow[VAR_SIZE]; // Low limit for the span
 	byte spanHigh[VAR_SIZE]; // High limit for the span
@@ -137,6 +136,42 @@ static void bytesToBinary(Cursor* cursor, byte* bytes, int length) {
 			StringBuilderAddChar(cursor->sb, ' ');
 		}
 	}
+}
+
+// The IpType for the version byte.
+static IpType getIpTypeFromVersion(byte version) {
+	switch (version)
+	{
+	case 4: return IP_TYPE_IPV4;
+	case 6: return IP_TYPE_IPV6;
+	default: return IP_TYPE_INVALID;
+	}
+}
+
+// The IpType for the component graph.
+static IpType getIpTypeFromGraph(IpiCgInfo* info) {
+	return getIpTypeFromVersion(info->version);
+}
+
+// Manipulates the source using the mask and shift parameters of the member.
+static uint32_t getMemberValue(IpiCgMember member, uint64_t source) {
+	return (uint32_t)(source & member.mask) >> member.shift;
+}
+
+// Returns the value of the current item.
+static uint32_t getValue(Cursor* cursor) {
+	uint32_t result = getMemberValue(
+		cursor->graph->info->nodes.value,
+		cursor->current);
+	return result;
+}
+
+// Returns the value of the current item.
+static uint32_t getSpanIndex(Cursor* cursor) {
+	uint32_t result = getMemberValue(
+		cursor->graph->info->nodes.spanIndex,
+		cursor->current);
+	return result;
 }
 
 static void traceNewLine(Cursor* cursor) {
@@ -185,9 +220,8 @@ static void traceInt(Cursor* cursor, const char* method, int64_t value) {
 #define IP "IP:" // IP value
 #define LV "LV:" // Low Value
 #define HV "HV:" // High Value
-#define SS "SS:" // Span Start index
+#define SI "SI:" // Span Index
 #define CI "CI:" // Cursor Index
-#define SE "SE:" // Span End index
 static void traceCompare(Cursor* cursor) {
 	StringBuilderAddChar(cursor->sb, '[');
 	StringBuilderAddInteger(cursor->sb, cursor->bitIndex);
@@ -224,14 +258,11 @@ static void traceCompare(Cursor* cursor) {
 	StringBuilderAddChars(cursor->sb, HV, sizeof(HV) - 1);
 	bytesToBinary(cursor, cursor->spanHigh, cursor->span.length);
 	StringBuilderAddChar(cursor->sb, ' ');
-	StringBuilderAddChars(cursor->sb, SS, sizeof(SS) - 1);
-	StringBuilderAddInteger(cursor->sb, cursor->span.startIndex);
+	StringBuilderAddChars(cursor->sb, SI, sizeof(SI) - 1);
+	StringBuilderAddInteger(cursor->sb, getSpanIndex(cursor));
 	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, CI, sizeof(CI) - 1);
 	StringBuilderAddInteger(cursor->sb, cursor->index);
-	StringBuilderAddChar(cursor->sb, ' ');
-	StringBuilderAddChars(cursor->sb, SE, sizeof(SE) - 1);
-	StringBuilderAddInteger(cursor->sb, cursor->span.endIndex);
 	traceNewLine(cursor);
 }
 
@@ -244,14 +275,37 @@ static void traceResult(Cursor* cursor, uint32_t result) {
 	traceNewLine(cursor);
 }
 
-// The IpType for the version byte.
-static IpType getIpTypeFromVersion(byte version) {
-	switch (version)
-	{
-	case 4: return IP_TYPE_IPV4;
-	case 6: return IP_TYPE_IPV6;
-	default: return IP_TYPE_INVALID;
-	}
+// The index of the profile associated with the value if this is a leaf value.
+// getIsProfileIndex must be called before getting the profile index.
+static uint32_t getProfileIndex(Cursor* cursor) {
+	uint32_t result = (uint32_t)(
+		getValue(cursor) - cursor->graph->info->nodes.collection.count);
+	return result;
+}
+
+// True if the cursor is currently positioned on a leaf and therefore profile 
+// index.
+static bool getIsProfileIndex(Cursor* cursor) {
+	bool result = getValue(cursor) >=
+		cursor->graph->info->nodes.collection.count;
+	TRACE_BOOL(cursor, "getIsProfileIndex", result);
+	return result;
+}
+
+// True if the cursor value is leaf, otherwise false.
+static bool isLeaf(Cursor* cursor) {
+	bool result = getIsProfileIndex(cursor);
+	TRACE_BOOL(cursor, "isLeaf", result);
+	return result;
+}
+
+// True if the cursor value has the low flag set, otherwise false.
+static bool isLowFlag(Cursor* cursor) {
+	bool result = getMemberValue(
+		cursor->graph->info->nodes.lowFlag,
+		cursor->current) != 0;
+	TRACE_BOOL(cursor, "isLowFlag", result);
+	return result;
 }
 
 // Resets the bytes to zero.
@@ -307,86 +361,6 @@ static bool isExhausted(Cursor* cursor) {
 	return byteIndex >= sizeof(cursor->ip.value);
 }
 
-// Comparer used to determine if the selected span is higher or lower than
-// the target.
-static int setSpanComparer(
-	Cursor* cursor,
-	Item* item,
-	long curIndex,
-	Exception* exception) {
-#	ifdef _MSC_VER
-	UNREFERENCED_PARAMETER(curIndex);
-	UNREFERENCED_PARAMETER(exception);
-#	endif
-	Span* span = (Span*)item->data.ptr;
-
-	// Store a copy of the span in the cursor to avoid needing to fetch it
-	// again should it prove to be the required result.
-	cursor->span = *span;
-
-	// If this span is within the require range then its the correct one
-	// to return.
-	if (cursor->index >= span->startIndex &&
-		cursor->index <= span->endIndex) {
-		return 0;
-	}
-
-	return span->startIndex - cursor->index;
-}
-
-static uint32_t setSpanSearch(
-	fiftyoneDegreesCollection* collection,
-	fiftyoneDegreesCollectionItem* item,
-	uint32_t lowerIndex,
-	uint32_t upperIndex,
-	Cursor* cursor,
-	fiftyoneDegreesException* exception) {
-	uint32_t upper = upperIndex,
-		lower = lowerIndex,
-		middle = 0;
-	int comparisonResult;
-	DataReset(&item->data);
-	while (lower <= upper) {
-
-		// Get the middle index for the next item to be compared.
-		middle = lower + (upper - lower) / 2;
-
-		// Get the item from the collection checking for NULL or an error.
-		if (collection->get(collection, middle, item, exception) == NULL ||
-			EXCEPTION_OKAY == false) {
-			return 0;
-		}
-
-		// Perform the binary search using the comparer provided with the item
-		// just returned.
-		comparisonResult = setSpanComparer(cursor, item, middle, exception);
-		if (EXCEPTION_OKAY == false) {
-			return 0;
-		}
-
-		if (comparisonResult == 0) {
-			return middle;
-		}
-		else if (comparisonResult > 0) {
-			if (middle) { // guard against underflow of unsigned type
-				upper = middle - 1;
-			}
-			else {
-				lower += 1; // break once iteration finishes
-			}
-		}
-		else {
-			lower = middle + 1;
-		}
-
-		COLLECTION_RELEASE(collection, item);
-	}
-
-	// The item could not be found so return the index of the span that covers 
-	// the range required.
-	return middle;
-}
-
 // Set the span low and high limits from the bytes.
 static void setSpanBytes(Cursor* cursor) {
 	Exception* exception = cursor->ex;
@@ -394,7 +368,7 @@ static void setSpanBytes(Cursor* cursor) {
 	// Use the current span offset to get the bytes.
 	byte* bytes = cursor->graph->spanBytes->get(
 		cursor->graph->spanBytes,
-		cursor->span.trail.offset,
+		cursor->span.offset,
 		&cursor->item,
 		cursor->ex);
 	if (EXCEPTION_FAILED) return;
@@ -427,12 +401,12 @@ void setSpanLimits(Cursor* cursor)
 {
 	memcpy(
 		&cursor->spanLow,
-		&cursor->span.trail.limits.low,
-		sizeof(cursor->span.trail.limits.low));
+		&cursor->span.limits.low,
+		sizeof(cursor->span.limits.low));
 	memcpy(
 		&cursor->spanHigh,
-		&cursor->span.trail.limits.high,
-		sizeof(cursor->span.trail.limits.high));
+		&cursor->span.limits.high,
+		sizeof(cursor->span.limits.high));
 }
 
 // Sets the cursor span to the correct settings for the current node 
@@ -440,41 +414,28 @@ void setSpanLimits(Cursor* cursor)
 static void setSpan(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 
-	// Check that the current span is valid and only move if not.
-	if (cursor->spanSet == true &&
-		cursor->index >= cursor->span.startIndex &&
-		cursor->index <= cursor->span.endIndex) {
-		return;
-	}
+	uint32_t spanIndex = getSpanIndex(cursor);
 
-	// Use binary search to find the index for the span. The comparer records
-	// the last span checked the cursor will have the correct span after the 
-	// search operation.
-	uint32_t index = setSpanSearch(
-		cursor->graph->spans,
-		&cursor->item,
-		0,
-		cursor->graph->spansCount - 1,
-		cursor,
-		cursor->ex);
-
-	// Validate that the span set has a start index equal to or greater than
-	// the current cursor position.
-	if (cursor->index < cursor->span.startIndex) {
-		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
-		return;
-	}
-	if (cursor->index > cursor->span.endIndex) {
-		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
+	// Check if the span needs to be updated.
+	if (cursor->spanSet && cursor->spanIndex == spanIndex) {
 		return;
 	}
 
 	// Validate that the index returned is less than the number of entries in
 	// the graph collection.
-	if (index >= cursor->graph->spansCount) {
+	if (spanIndex >= cursor->graph->spansCount) {
 		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
 		return;
 	}
+
+	// Set the span for the current span index.
+	cursor->span = *(Span*)cursor->graph->spans->get(
+		cursor->graph->spans,
+		spanIndex,
+		&cursor->item,
+		exception);
+	if (EXCEPTION_FAILED) return;
+	COLLECTION_RELEASE(cursor->graph->spans, &cursor->item);
 
 	// If the span is more than 16 bits then the span bytes are contained in
 	// another collection.
@@ -491,6 +452,7 @@ static void setSpan(Cursor* cursor) {
 	// Next time the set method is called the check to see if the span needs to
 	// be modified can be applied.
 	cursor->spanSet = true;
+	cursor->spanIndex = spanIndex;
 }
 
 // Extract the value as an integer from the bit packed record provided.
@@ -519,57 +481,6 @@ static uint64_t extractValue(
 			bitIndex--;
 		}
 	}
-	return result;
-}
-
-// The IpType for the component graph.
-static IpType getIpTypeFromGraph(IpiCgInfo* info) {
-	return getIpTypeFromVersion(info->version);
-}
-
-// Manipulates the source using the mask and shift parameters of the member.
-static uint32_t getMemberValue(IpiCgMember member, uint64_t source) {
-	return (uint32_t)(source & member.mask) >> member.shift;
-}
-
-// Returns the value of the current item.
-static uint32_t getValue(Cursor* cursor) {
-	uint32_t result = getMemberValue(
-		cursor->graph->info->nodes.value, 
-		cursor->current);
-	return result;
-}
-
-// True if the cursor is currently positioned on a leaf and therefore profile 
-// index.
-static bool getIsProfileIndex(Cursor* cursor) {
-	bool result = getValue(cursor) >= 
-		cursor->graph->info->nodes.collection.count;
-	TRACE_BOOL(cursor, "getIsProfileIndex", result);
-	return result;
-}
-
-// The index of the profile associated with the value if this is a leaf value.
-// getIsProfileIndex must be called before getting the profile index.
-static uint32_t getProfileIndex(Cursor* cursor) {
-	uint32_t result = (uint32_t)(
-		getValue(cursor) - cursor->graph->info->nodes.collection.count);
-	return result;
-}
-
-// True if the cursor value is leaf, otherwise false.
-static bool isLeaf(Cursor* cursor) {
-	bool result = getIsProfileIndex(cursor);
-	TRACE_BOOL(cursor, "isLeaf", result);
-	return result;
-}
-
-// True if the cursor value has the low flag set, otherwise false.
-static bool isLowFlag(Cursor* cursor) {
-	bool result = getMemberValue(
-		cursor->graph->info->nodes.lowFlag, 
-		cursor->current) != 0;
-	TRACE_BOOL(cursor, "isLowFlag", result);
 	return result;
 }
 
@@ -612,6 +523,7 @@ static void cursorMove(Cursor* cursor, uint32_t recordIndex) {
 
 	// Set the correct span to use for any compare operations.
 	setSpan(cursor);
+
 	if (EXCEPTION_FAILED) return;
 }
 
@@ -635,7 +547,7 @@ static Cursor cursorCreate(
 	cursor.ex = exception;
 	cursor.sb = sb;
 	cursor.span.length = 0;
-	cursor.span.startIndex = 0;
+	cursor.span.offset = 0;
 	cursor.current = 0;
 	cursor.index = 0;
 	cursor.spanSet = false;

@@ -122,6 +122,7 @@ typedef struct fiftyone_degrees_ipi_cg_member_t {
 typedef struct fiftyone_degrees_ipi_cg_member_node_t {
 	fiftyoneDegreesCollectionHeader collection;
 	uint16_t recordSize; /**< Number of bits that form the value record */
+	fiftyoneDegreesIpiCgMember spanIndex; /**< Bit for the span index */
 	fiftyoneDegreesIpiCgMember lowFlag; /**< Bit for the low flag */
 	fiftyoneDegreesIpiCgMember value; /**< Bits for the value */
 } fiftyoneDegreesIpiCgMemberNode;
