@@ -116,22 +116,11 @@ typedef struct fiftyone_degrees_ipi_cg_member_t {
 #pragma pack(pop)
 
 /**
- * Collection header information for graph collections.
- */
-#pragma pack(push, 1)
-typedef struct fiftyone_degrees_ipi_cg_member_collection_t {
-	uint32_t length; /**< Number of bytes that form the collection */
-	uint32_t count; /**< Number of bit packed records in the collection */
-	uint32_t startPosition; /**< Position of the first collection byte */
-} fiftyoneDegreesIpiCgMemberCollection;
-#pragma pack(pop)
-
-/**
  * Data structure used for the values collection.
  */
 #pragma pack(push, 1)
 typedef struct fiftyone_degrees_ipi_cg_member_node_t {
-	fiftyoneDegreesIpiCgMemberCollection collection;
+	fiftyoneDegreesCollectionHeader collection;
 	uint16_t recordSize; /**< Number of bits that form the value record */
 	fiftyoneDegreesIpiCgMember lowFlag; /**< Bit for the low flag */
 	fiftyoneDegreesIpiCgMember value; /**< Bits for the value */
@@ -162,8 +151,8 @@ typedef struct fiftyone_degrees_ipi_cg_info_t {
 								header data structure for the graph. */
 	uint32_t profileGroupCount; /**< The total number of profile groups
 								pointed to by the leaf nodes of the graph */
-	fiftyoneDegreesIpiCgMemberCollection spanBytes;
-	fiftyoneDegreesIpiCgMemberCollection spans;
+	fiftyoneDegreesCollectionHeader spanBytes;
+	fiftyoneDegreesCollectionHeader spans;
 	fiftyoneDegreesIpiCgMemberNode nodes;
 } fiftyoneDegreesIpiCgInfo;
 #pragma pack(pop)

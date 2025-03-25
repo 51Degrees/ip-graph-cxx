@@ -255,8 +255,23 @@ static IpType getIpTypeFromVersion(byte version) {
 }
 
 // Resets the bytes to zero.
-static void resetBytes(byte* bytes) {
+static void bytesReset(byte* bytes) {
 	memset(bytes, 0, sizeof(VAR_SIZE));
+}
+
+// If the bytes of first and second that are needed to cover the bits are equal
+// returns true, otherwise false.
+static int bytesCompare(byte* first, byte* second, int bits) {
+	int bytes = (bits / 8) + (bits % 8 != 0 ? 1 : 0);
+	for (int i = 0; i < bytes; i++) {
+		if (first[i] < second[i]) {
+			return -1;
+		}
+		if (first[i] > second[i]) {
+			return 1;
+		}
+	}
+	return 0;
 }
 
 // Copies bits from the source to the destination starting at the start bit in
@@ -276,7 +291,7 @@ static void copyBits(byte* dest, const byte* src, int startBit, int bits) {
 static void setIpValue(Cursor* cursor) {
 	
 	// Reset the IP value ready to include the new bits.
-	resetBytes(cursor->ipValue);
+	bytesReset(cursor->ipValue);
 
 	// Copy the bits from the IP address to the compare field.
 	copyBits(
@@ -372,21 +387,6 @@ static uint32_t setSpanSearch(
 	return middle;
 }
 
-// If the bytes of first and second that are needed to cover the bits are equal
-// returns true, otherwise false.
-static int compareBytes(byte* first, byte* second, int bits) {
-	int bytes = (bits / 8) + (bits % 8 != 0 ? 1 : 0);
-	for (int i = 0; i < bytes; i++) {
-		if (first[i] < second[i]) {
-			return -1;
-		}
-		if (first[i] > second[i]) {
-			return 1;
-		}
-	}
-	return 0;
-}
-
 // Set the span low and high limits from the bytes.
 static void setSpanBytes(Cursor* cursor) {
 	Exception* exception = cursor->ex;
@@ -413,7 +413,7 @@ static void setSpanBytes(Cursor* cursor) {
 
 	COLLECTION_RELEASE(cursor->graph->spanBytes, &cursor->item);
 
-	if (compareBytes(
+	if (bytesCompare(
 		cursor->spanLow, 
 		cursor->spanHigh, 
 		cursor->span.length) >= 0) {
@@ -478,8 +478,8 @@ static void setSpan(Cursor* cursor) {
 
 	// If the span is more than 16 bits then the span bytes are contained in
 	// another collection.
-	resetBytes(cursor->spanLow);
-	resetBytes(cursor->spanHigh);
+	bytesReset(cursor->spanLow);
+	bytesReset(cursor->spanHigh);
 	if (cursor->span.length > 16) {
 		setSpanBytes(cursor);
 		if (EXCEPTION_FAILED) return;
@@ -760,11 +760,11 @@ static void compareIpToSpan(Cursor* cursor) {
 	setIpValue(cursor); 
 
 	// Set the comparison result.
-	int lowCompare = compareBytes(
+	int lowCompare = bytesCompare(
 		cursor->ipValue,
 		cursor->spanLow,
 		cursor->span.length);
-	int highCompare = compareBytes(
+	int highCompare = bytesCompare(
 		cursor->ipValue,
 		cursor->spanHigh,
 		cursor->span.length);
@@ -803,6 +803,7 @@ static uint32_t evaluate(Cursor* cursor) {
 
 	// Move the cursor to the entry record for the graph.
 	cursorMove(cursor, cursor->graph->info->graphIndex);
+	if (EXCEPTION_FAILED) return 0;
 
 	do
 	{
@@ -960,40 +961,27 @@ static IpiCgArray* ipiGraphCreate(
 			i,
 			&graphs->items[i].itemInfo,
 			exception);
-		if (EXCEPTION_OKAY == false) {
+		if (EXCEPTION_FAILED) {
 			fiftyoneDegreesIpiGraphFree(graphs);
 			return NULL;
 		}
+		COLLECTION_RELEASE(collection, &graphs->items[i].itemInfo);
 		graphs->count++;
 
-		// Create the collection for the nodes that form the graph.
-		CollectionHeader headerNodes;
-
-		// Must be zero as the count is not measured in bytes.
-		headerNodes.count = 0; 
-		headerNodes.length = 
-			graphs->items[i].info->nodes.collection.length;
-		headerNodes.startPosition = 
-			graphs->items[i].info->nodes.collection.startPosition;
-		graphs->items[i].nodes = collectionCreate(
-			headerNodes,
-			state);
+		// Create the collection for the node values. Must overwrite the count
+		// to zero as it is consumed as a variable width collection.
+		CollectionHeader headerNodes = graphs->items[i].info->nodes.collection;
+		headerNodes.count = 0;
+		graphs->items[i].nodes = collectionCreate(headerNodes, state);
 		if (graphs->items[i].nodes == NULL) {
 			EXCEPTION_SET(CORRUPT_DATA);
 			fiftyoneDegreesIpiGraphFree(graphs);
 			return NULL;
 		}
 
-		// Create the collection for the spans that are used to evaluate
-		// the result of each node.
-		CollectionHeader headerSpans;
-		headerSpans.count = graphs->items[i].info->spans.count;
-		headerSpans.length =
-			graphs->items[i].info->spans.length;
-		headerSpans.startPosition =
-			graphs->items[i].info->spans.startPosition;
+		// Create the collection for the spans.
 		graphs->items[i].spans = collectionCreate(
-			headerSpans,
+			graphs->items[i].info->spans,
 			state);
 		if (graphs->items[i].spans == NULL) {
 			EXCEPTION_SET(CORRUPT_DATA);
@@ -1003,16 +991,9 @@ static IpiCgArray* ipiGraphCreate(
 		graphs->items[i].spansCount = CollectionGetCount(
 			graphs->items[i].spans);
 
-		// Create the collection for the span bytes that are used to obtain the
-		// limits for a span where more than 16 bits per limit are needed.
-		CollectionHeader headerSpanBytes;
-		headerSpanBytes.count = graphs->items[i].info->spanBytes.count;
-		headerSpanBytes.length =
-			graphs->items[i].info->spanBytes.length;
-		headerSpanBytes.startPosition =
-			graphs->items[i].info->spanBytes.startPosition;
+		// Create the collection for the span bytes.
 		graphs->items[i].spanBytes = collectionCreate(
-			headerSpanBytes,
+			graphs->items[i].info->spanBytes,
 			state);
 		if (graphs->items[i].spanBytes == NULL) {
 			EXCEPTION_SET(CORRUPT_DATA);
