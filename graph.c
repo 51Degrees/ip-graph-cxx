@@ -61,14 +61,6 @@ typedef struct file_collection_t {
 // Function used to create the collection for each of the graphs.
 typedef Collection*(*collectionCreate)(CollectionHeader header, void* state);
 
-// Structure for the span bytes when length is <= 16.
-#pragma pack(push, 1)
-typedef struct span_limits_t {
-	byte low[2];
-	byte high[2];
-} SpanLimits;
-#pragma pack(pop)
-
 // Structure for the span.
 #pragma pack(push, 1)
 typedef struct span_t {
@@ -76,7 +68,7 @@ typedef struct span_t {
 	byte lengthHigh; // Bit length of the high span limit
 	union {
 		uint32_t offset; // Offset to the span bytes
-		SpanLimits limits; // Array of 2x2 bytes
+		byte limits[4]; // Array of 4 bytes with the low and high bits
 	};
 } Span;
 #pragma pack(pop)
@@ -323,11 +315,11 @@ static bool isLowFlag(Cursor* cursor) {
 
 // Resets the bytes to zero.
 static void bytesReset(byte* bytes) {
-	memset(bytes, 0, sizeof(VAR_SIZE));
+	memset(bytes, 0, VAR_SIZE);
 }
 
-// If the bytes of first and second that are needed to cover the bits are equal
-// returns true, otherwise false.
+// If the bits of first and second that are needed to cover the bits are equal
+// returns 0, otherwise -1 or 1 depending on whether they are higher or lower.
 static int bitsCompare(byte* first, byte* second, int bits) {
 	for (int i = 0; i < bits; i++) {
 		int firstBit = GET_BIT(first, i);
@@ -380,6 +372,7 @@ static void setSpanBytes(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	
 	// Use the current span offset to get the bytes.
+	DataReset(&cursor->item.data);
 	byte* bytes = cursor->graph->spanBytes->get(
 		cursor->graph->spanBytes,
 		cursor->span.offset,
@@ -414,12 +407,12 @@ static void setSpanBytes(Cursor* cursor) {
 void setSpanLimits(Cursor* cursor) {
 	copyBits(
 		cursor->spanLow,
-		&cursor->span.limits,
+		cursor->span.limits,
 		0,
 		cursor->span.lengthLow);
 	copyBits(
 		cursor->spanHigh,
-		&cursor->span.limits,
+		cursor->span.limits,
 		cursor->span.lengthLow,
 		cursor->span.lengthHigh);
 }
@@ -444,6 +437,7 @@ static void setSpan(Cursor* cursor) {
 	}
 
 	// Set the span for the current span index.
+	DataReset(&cursor->item.data);
 	cursor->span = *(Span*)cursor->graph->spans->get(
 		cursor->graph->spans,
 		spanIndex,
@@ -452,10 +446,12 @@ static void setSpan(Cursor* cursor) {
 	if (EXCEPTION_FAILED) return;
 	COLLECTION_RELEASE(cursor->graph->spans, &cursor->item);
 
-	// If the span is more than 16 bits then the span bytes are contained in
-	// another collection.
+	// Ensure set to 0s before the bits are copied.
 	bytesReset(cursor->spanLow);
 	bytesReset(cursor->spanHigh);
+
+	// If the span is more than 32 bits then the span bytes are contained in
+	// the span bytes collection.
 	if (getTotalSpanLimitLength(cursor) > 32) {
 		setSpanBytes(cursor);
 		if (EXCEPTION_FAILED) return;
@@ -502,20 +498,21 @@ static uint64_t extractValue(
 // Moves the cursor to the index in the collection returning the value of the
 // record. Uses CgInfo.recordSize to convert the byte array of the record into
 // a 64 bit positive integer.
-static void cursorMove(Cursor* cursor, uint32_t recordIndex) {
-	TRACE_INT(cursor, "cursorMove", recordIndex);
+static void cursorMove(Cursor* cursor, uint32_t index) {
+	TRACE_INT(cursor, "cursorMove", index);
 
 	Exception* exception = cursor->ex;
 
 	// Work out the byte index for the record index and the starting bit index
 	// within that byte.
 	uint64_t startBitIndex = (
-		recordIndex *
+		index *
 		cursor->graph->info->nodes.recordSize);
 	uint64_t byteIndex = startBitIndex / 8;
 	byte highBitIndex = 7 - (startBitIndex % 8);
 
 	// Get a pointer to that byte from the collection.
+	DataReset(&cursor->item.data);
 	byte* ptr = (byte*)cursor->graph->nodes->get(
 		cursor->graph->nodes,
 		(uint32_t)byteIndex,
@@ -524,7 +521,7 @@ static void cursorMove(Cursor* cursor, uint32_t recordIndex) {
 	if (EXCEPTION_FAILED) return;
 
 	// Set the record index.
-	cursor->index = recordIndex;
+	cursor->index = index;
 
 	// Move the bits in the bytes pointed to create the requirement unsigned
 	// long.
@@ -533,8 +530,8 @@ static void cursorMove(Cursor* cursor, uint32_t recordIndex) {
 		ptr,
 		highBitIndex);
 
-	// Release the data. 
-	cursor->item.collection->release(&cursor->item);
+	// Release the data item.
+	COLLECTION_RELEASE(cursor->item.collection, &cursor->item);
 
 	// Set the correct span to use for any compare operations.
 	setSpan(cursor);
@@ -559,17 +556,20 @@ static Cursor cursorCreate(
 	StringBuilder* sb,
 	Exception* exception) {
 	Cursor cursor = { graph, ip };
-	cursor.ex = exception;
-	cursor.sb = sb;
-	cursor.span.lengthLow = 0;
-	cursor.span.lengthHigh = 0;
-	cursor.span.offset = 0;
+	bytesReset(cursor.ipValue);
+	cursor.bitIndex = 0;
 	cursor.current = 0;
 	cursor.index = 0;
+	cursor.previousHighIndex = graph->info->graphIndex;
+	cursor.spanIndex = 0;
+	cursor.span.lengthLow = 0;
+	cursor.span.lengthHigh = 0;
+	cursor.span.offset = 0;	
 	cursor.spanSet = false;
 	cursor.compareResult = NO_COMPARE;
-	cursor.previousHighIndex = graph->info->graphIndex;
 	DataReset(&cursor.item.data);
+	cursor.sb = sb;
+	cursor.ex = exception;
 	return cursor;
 }
 
@@ -729,13 +729,13 @@ static uint32_t evaluate(Cursor* cursor) {
 	bool found = false;
 	traceNewLine(cursor);
 
-	// Move the cursor to the entry record for the graph.
+	// Move the cursor to the entry for the graph.
 	cursorMove(cursor, cursor->graph->info->graphIndex);
 	if (EXCEPTION_FAILED) return 0;
 
 	do
 	{
-		// Compare the current cursor bits against the span value.
+		// Compare the current cursor IP bits against the span limits.
 		compareIpToSpan(cursor);
 
 		switch (cursor->compareResult) {
@@ -745,7 +745,7 @@ static uint32_t evaluate(Cursor* cursor) {
 			found = true;
 			break;
 		case EQUAL_LOW:
-			// Advance the bits before the span is then changed.
+			// Advance the bits before the cursor is changed.
 			cursor->bitIndex += cursor->span.lengthLow;
 			found = selectLow(cursor);
 			if (EXCEPTION_FAILED) return 0;
@@ -756,7 +756,7 @@ static uint32_t evaluate(Cursor* cursor) {
 			found = true;
 			break;
 		case EQUAL_HIGH:
-			// Advance the bits before the span is then changed.
+			// Advance the bits before the cursor is changed.
 			cursor->bitIndex += cursor->span.lengthHigh;
 			found = selectHigh(cursor);
 			if (EXCEPTION_FAILED) return 0;
@@ -993,11 +993,33 @@ fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluateTrace(
 	int const length,
 	fiftyoneDegreesException* exception) {
 	StringBuilder sb = { buffer, length };
+	StringBuilderInit(&sb);
+
+	// Add the bytes of the IP address to the trace.
+	StringBuilderAddChar(&sb, '\r');
+	StringBuilderAddChar(&sb, '\n');
+	StringBuilderAddChars(&sb, "IP:", sizeof("IP:") - 1);
+	int ipLength = 0;
+	switch (address.type) {
+	case FIFTYONE_DEGREES_IP_TYPE_IPV4:
+		ipLength = 4;
+		break;
+	case FIFTYONE_DEGREES_IP_TYPE_IPV6:
+		ipLength = 16;
+		break;
+	}
+	for (int i = 0; i < ipLength; i++) {
+		StringBuilderAddInteger(&sb, address.value[i]);
+		if (i < ipLength - 1) {
+			StringBuilderAddChar(&sb, '.');
+		}
+	}
+
 	const fiftyoneDegreesIpiCgResult result = ipiGraphEvaluate(
 		graphs, 
 		componentId, 
 		address, 
-		StringBuilderInit(&sb),
+		&sb,
 		exception);
 	StringBuilderAddChar(&sb, '\0');
 	return result;
