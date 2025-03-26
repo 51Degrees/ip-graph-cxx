@@ -72,7 +72,8 @@ typedef struct span_limits_t {
 // Structure for the span.
 #pragma pack(push, 1)
 typedef struct span_t {
-	byte length; // Bit length of the low and high limits
+	byte lengthLow; // Bit length of the low span limit
+	byte lengthHigh; // Bit length of the high span limit
 	union {
 		uint32_t offset; // Offset to the span bytes
 		SpanLimits limits; // Array of 2x2 bytes
@@ -174,6 +175,18 @@ static uint32_t getSpanIndex(Cursor* cursor) {
 	return result;
 }
 
+// The larger of the two span limits.
+static int getMaxSpanLimitLength(Cursor* cursor) {
+	return cursor->span.lengthLow > cursor->span.lengthHigh ?
+		cursor->span.lengthLow :
+		cursor->span.lengthHigh;
+}
+
+// The total length of the bits in the span limits.
+static int getTotalSpanLimitLength(Cursor* cursor) {
+	return cursor->span.lengthLow + cursor->span.lengthHigh;
+}
+
 static void traceNewLine(Cursor* cursor) {
 	StringBuilderAddChar(cursor->sb, '\r');
 	StringBuilderAddChar(cursor->sb, '\n');
@@ -250,13 +263,13 @@ static void traceCompare(Cursor* cursor) {
 	}
 	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, IP, sizeof(IP) - 1);
-	bytesToBinary(cursor, cursor->ipValue, cursor->span.length);
+	bytesToBinary(cursor, cursor->ipValue, getMaxSpanLimitLength(cursor));
 	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, LV, sizeof(LV) - 1);
-	bytesToBinary(cursor, cursor->spanLow, cursor->span.length);
+	bytesToBinary(cursor, cursor->spanLow, cursor->span.lengthLow);
 	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, HV, sizeof(HV) - 1);
-	bytesToBinary(cursor, cursor->spanHigh, cursor->span.length);
+	bytesToBinary(cursor, cursor->spanHigh, cursor->span.lengthHigh);
 	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, SI, sizeof(SI) - 1);
 	StringBuilderAddInteger(cursor->sb, getSpanIndex(cursor));
@@ -315,13 +328,14 @@ static void bytesReset(byte* bytes) {
 
 // If the bytes of first and second that are needed to cover the bits are equal
 // returns true, otherwise false.
-static int bytesCompare(byte* first, byte* second, int bits) {
-	int bytes = (bits / 8) + (bits % 8 != 0 ? 1 : 0);
-	for (int i = 0; i < bytes; i++) {
-		if (first[i] < second[i]) {
+static int bitsCompare(byte* first, byte* second, int bits) {
+	for (int i = 0; i < bits; i++) {
+		int firstBit = GET_BIT(first, i);
+		int secondBit = GET_BIT(second, i);
+		if (firstBit < secondBit) {
 			return -1;
 		}
-		if (first[i] > second[i]) {
+		if (firstBit > secondBit) {
 			return 1;
 		}
 	}
@@ -352,7 +366,7 @@ static void setIpValue(Cursor* cursor) {
 		cursor->ipValue, 
 		cursor->ip.value, 
 		cursor->bitIndex,
-		cursor->span.length);
+		getMaxSpanLimitLength(cursor));
 }
 
 // True if all the bytes of the address have been consumed.
@@ -361,7 +375,7 @@ static bool isExhausted(Cursor* cursor) {
 	return byteIndex >= sizeof(cursor->ip.value);
 }
 
-// Set the span low and high limits from the bytes.
+// Set the span low and high limits from the offset.
 static void setSpanBytes(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	
@@ -378,35 +392,36 @@ static void setSpanBytes(Cursor* cursor) {
 		cursor->spanLow, 
 		bytes, 
 		0,
-		cursor->span.length);
+		cursor->span.lengthLow);
 	copyBits(
 		cursor->spanHigh,
 		bytes,
-		cursor->span.length, 
-		cursor->span.length);
+		cursor->span.lengthLow, 
+		cursor->span.lengthHigh);
 
 	COLLECTION_RELEASE(cursor->graph->spanBytes, &cursor->item);
 
-	if (bytesCompare(
+	if (bitsCompare(
 		cursor->spanLow, 
 		cursor->spanHigh, 
-		cursor->span.length) >= 0) {
+		getMaxSpanLimitLength(cursor)) >= 0) {
 		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
 		return;
 	}
 }
 
-// Copies the two bytes for the low and high limits.
-void setSpanLimits(Cursor* cursor)
-{
-	memcpy(
-		&cursor->spanLow,
-		&cursor->span.limits.low,
-		sizeof(cursor->span.limits.low));
-	memcpy(
-		&cursor->spanHigh,
-		&cursor->span.limits.high,
-		sizeof(cursor->span.limits.high));
+// Set the span low and high limits from the limits bytes.
+void setSpanLimits(Cursor* cursor) {
+	copyBits(
+		cursor->spanLow,
+		&cursor->span.limits,
+		0,
+		cursor->span.lengthLow);
+	copyBits(
+		cursor->spanHigh,
+		&cursor->span.limits,
+		cursor->span.lengthLow,
+		cursor->span.lengthHigh);
 }
 
 // Sets the cursor span to the correct settings for the current node 
@@ -441,7 +456,7 @@ static void setSpan(Cursor* cursor) {
 	// another collection.
 	bytesReset(cursor->spanLow);
 	bytesReset(cursor->spanHigh);
-	if (cursor->span.length > 16) {
+	if (getTotalSpanLimitLength(cursor) > 32) {
 		setSpanBytes(cursor);
 		if (EXCEPTION_FAILED) return;
 	}
@@ -546,7 +561,8 @@ static Cursor cursorCreate(
 	Cursor cursor = { graph, ip };
 	cursor.ex = exception;
 	cursor.sb = sb;
-	cursor.span.length = 0;
+	cursor.span.lengthLow = 0;
+	cursor.span.lengthHigh = 0;
 	cursor.span.offset = 0;
 	cursor.current = 0;
 	cursor.index = 0;
@@ -672,14 +688,14 @@ static void compareIpToSpan(Cursor* cursor) {
 	setIpValue(cursor); 
 
 	// Set the comparison result.
-	int lowCompare = bytesCompare(
+	int lowCompare = bitsCompare(
 		cursor->ipValue,
 		cursor->spanLow,
-		cursor->span.length);
-	int highCompare = bytesCompare(
+		cursor->span.lengthLow);
+	int highCompare = bitsCompare(
 		cursor->ipValue,
 		cursor->spanHigh,
-		cursor->span.length);
+		cursor->span.lengthHigh);
 	if (lowCompare < 0) {
 		cursor->compareResult = LESS_THAN_LOW;
 	}
@@ -722,9 +738,6 @@ static uint32_t evaluate(Cursor* cursor) {
 		// Compare the current cursor bits against the span value.
 		compareIpToSpan(cursor);
 
-		// Advance the bits before the span is then changed.
-		cursor->bitIndex += cursor->span.length;
-
 		switch (cursor->compareResult) {
 		case LESS_THAN_LOW:
 			selectCompleteLow(cursor);
@@ -732,6 +745,8 @@ static uint32_t evaluate(Cursor* cursor) {
 			found = true;
 			break;
 		case EQUAL_LOW:
+			// Advance the bits before the span is then changed.
+			cursor->bitIndex += cursor->span.lengthLow;
 			found = selectLow(cursor);
 			if (EXCEPTION_FAILED) return 0;
 			break;
@@ -741,6 +756,8 @@ static uint32_t evaluate(Cursor* cursor) {
 			found = true;
 			break;
 		case EQUAL_HIGH:
+			// Advance the bits before the span is then changed.
+			cursor->bitIndex += cursor->span.lengthHigh;
 			found = selectHigh(cursor);
 			if (EXCEPTION_FAILED) return 0;
 			break;
