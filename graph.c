@@ -150,7 +150,7 @@ static IpType getIpTypeFromGraph(IpiCgInfo* info) {
 
 // Manipulates the source using the mask and shift parameters of the member.
 static uint32_t getMemberValue(IpiCgMember member, uint64_t source) {
-	return (uint32_t)(source & member.mask) >> member.shift;
+	return (uint32_t)((source & member.mask) >> member.shift);
 }
 
 // Returns the value from the current node value.
@@ -503,6 +503,10 @@ static uint64_t extractValue(
 static void cursorMove(Cursor* cursor, uint32_t index) {
 	Exception* exception = cursor->ex;
 
+	if (index == 21) {
+		int t = 0;
+	}
+
 	// Work out the byte index for the record index and the starting bit index
 	// within that byte.
 	uint64_t startBitIndex = (
@@ -608,7 +612,7 @@ static bool selectLow(Cursor* cursor) {
 
 // Moves the cursor back to the previous high entry, and then selects low.
 // Returns true if a leaf is found, otherwise false.
-static bool cursorMoveBack(Cursor* cursor) {
+static bool cursorMoveBackLow(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	TRACE_LABEL(cursor, "cursorMoveBack");
 	cursorMove(cursor, cursor->previousHighIndex);
@@ -673,7 +677,7 @@ static void selectCompleteLowHigh(Cursor* cursor) {
 static void selectCompleteLow(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	TRACE_LABEL(cursor, "selectCompleteLow");
-	if (cursorMoveBack(cursor) == false) {
+	if (cursorMoveBackLow(cursor) == false) {
 		if (EXCEPTION_FAILED) return;
 		while (selectHigh(cursor) == false) {
 			if (EXCEPTION_FAILED) return;
