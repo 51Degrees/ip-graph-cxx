@@ -80,7 +80,7 @@ typedef struct cursor_t {
 	byte ipValue[VAR_SIZE]; // The value that should be compared to the span
 	byte bitIndex; // Current bit index from high to low in the IP address 
 				   // value array
-	uint64_t current; // The value of the current item in the graph
+	uint64_t nodeBits; // The value of the current item in the graph
 	uint32_t index; // The current index in the graph values collection
 	uint32_t previousHighIndex; // The index of the last high index
 	uint32_t spanIndex; // The current span index
@@ -101,12 +101,14 @@ typedef struct cursor_t {
 #define TRACE_COMPARE(c) traceCompare(c);
 #define TRACE_LABEL(c,m) traceLabel(c,m);
 #define TRACE_RESULT(c,r) traceResult(c,r);
+#define TRACE_MOVE(c,m) traceMove(c,m);
 #else
 #define TRACE_BOOL(c,m,v)
 #define TRACE_INT(c,m,v)
 #define TRACE_COMPARE(c)
 #define TRACE_LABEL(c,m)
 #define TRACE_RESULT(c,r)
+#define TRACE_MOVE(c,m)
 #endif
 
 // Get the bit as a bool for the byte array and bit index from the left. High
@@ -151,19 +153,19 @@ static uint32_t getMemberValue(IpiCgMember member, uint64_t source) {
 	return (uint32_t)(source & member.mask) >> member.shift;
 }
 
-// Returns the value of the current item.
+// Returns the value from the current node value.
 static uint32_t getValue(Cursor* cursor) {
 	uint32_t result = getMemberValue(
 		cursor->graph->info->nodes.value,
-		cursor->current);
+		cursor->nodeBits);
 	return result;
 }
 
-// Returns the value of the current item.
+// Returns the span index from the current node value.
 static uint32_t getSpanIndex(Cursor* cursor) {
 	uint32_t result = getMemberValue(
 		cursor->graph->info->nodes.spanIndex,
-		cursor->current);
+		cursor->nodeBits);
 	return result;
 }
 
@@ -271,6 +273,18 @@ static void traceCompare(Cursor* cursor) {
 	traceNewLine(cursor);
 }
 
+static void traceMove(Cursor* cursor, const char* method) {
+	StringBuilderAddChar(cursor->sb, '\t');
+	StringBuilderAddChars(cursor->sb, method, strlen(method));
+	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddInteger(cursor->sb, cursor->index);
+	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddInteger(cursor->sb, cursor->spanIndex);
+	StringBuilderAddChar(cursor->sb, ' ');
+	bytesToBinary(cursor, (byte*)&cursor->nodeBits, 64);
+	traceNewLine(cursor);
+}
+
 #define RESULT "result"
 static void traceResult(Cursor* cursor, uint32_t result) {
 	traceNewLine(cursor);
@@ -308,7 +322,7 @@ static bool isLeaf(Cursor* cursor) {
 static bool isLowFlag(Cursor* cursor) {
 	bool result = getMemberValue(
 		cursor->graph->info->nodes.lowFlag,
-		cursor->current) != 0;
+		cursor->nodeBits) != 0;
 	TRACE_BOOL(cursor, "isLowFlag", result);
 	return result;
 }
@@ -417,8 +431,8 @@ void setSpanLimits(Cursor* cursor) {
 		cursor->span.lengthHigh);
 }
 
-// Sets the cursor span to the correct settings for the current node 
-// record index. Uses the binary search feature of the collection.
+// Sets the cursor span to the correct settings for the current node value 
+// index. Uses the binary search feature of the collection.
 static void setSpan(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 
@@ -466,30 +480,15 @@ static void setSpan(Cursor* cursor) {
 	cursor->spanIndex = spanIndex;
 }
 
-// Extract the value as an integer from the bit packed record provided.
+// Extract the value as a uint64_t from the bit packed record provided.
 static uint64_t extractValue(
+	const byte* source,
 	const uint16_t recordSize,
-	const byte* buf, 
 	unsigned bitIndex) {
 	uint64_t result = 0;
-	byte byteIndex = 0;
-	uint8_t byte = buf[byteIndex];
-	for (unsigned i = 0; i < recordSize; i++) {
-
-		// Extract the bit (0 or 1).
-		uint8_t bit = (byte >> bitIndex) & 1;
-
-		// Shift the result left and add the bit.
-		result = (result << 1) | bit;
-
-		// Reduce the bit index and adjust the byte index if 0.
-		if (bitIndex == 0) {
-			bitIndex = 7;
-			byteIndex++;
-			byte = buf[byteIndex];
-		}
-		else {
-			bitIndex--;
+	for (int i = recordSize - 1, s = bitIndex; i >= 0; i--, s++) {
+		if (GET_BIT(source, s)) {
+			result |= (1UL << i);
 		}
 	}
 	return result;
@@ -499,8 +498,6 @@ static uint64_t extractValue(
 // record. Uses CgInfo.recordSize to convert the byte array of the record into
 // a 64 bit positive integer.
 static void cursorMove(Cursor* cursor, uint32_t index) {
-	TRACE_INT(cursor, "cursorMove", index);
-
 	Exception* exception = cursor->ex;
 
 	// Work out the byte index for the record index and the starting bit index
@@ -509,7 +506,7 @@ static void cursorMove(Cursor* cursor, uint32_t index) {
 		index *
 		cursor->graph->info->nodes.recordSize);
 	uint64_t byteIndex = startBitIndex / 8;
-	byte highBitIndex = 7 - (startBitIndex % 8);
+	byte bitIndex = startBitIndex % 8;
 
 	// Get a pointer to that byte from the collection.
 	DataReset(&cursor->item.data);
@@ -520,21 +517,23 @@ static void cursorMove(Cursor* cursor, uint32_t index) {
 		cursor->ex);
 	if (EXCEPTION_FAILED) return;
 
-	// Set the record index.
-	cursor->index = index;
-
-	// Move the bits in the bytes pointed to create the requirement unsigned
-	// long.
-	cursor->current = extractValue(
-		cursor->graph->info->nodes.recordSize,
+	// Move the bits in the bytes pointed to create the unsigned 64 bit integer
+	// that contains the node value bits.
+	cursor->nodeBits = extractValue(
 		ptr,
-		highBitIndex);
+		cursor->graph->info->nodes.recordSize,
+		bitIndex);
 
 	// Release the data item.
 	COLLECTION_RELEASE(cursor->item.collection, &cursor->item);
 
+	// Set the record index.
+	cursor->index = index;
+
 	// Set the correct span to use for any compare operations.
 	setSpan(cursor);
+
+	TRACE_MOVE(cursor, "cursorMove");
 
 	if (EXCEPTION_FAILED) return;
 }
@@ -558,7 +557,7 @@ static Cursor cursorCreate(
 	Cursor cursor = { graph, ip };
 	bytesReset(cursor.ipValue);
 	cursor.bitIndex = 0;
-	cursor.current = 0;
+	cursor.nodeBits = 0;
 	cursor.index = 0;
 	cursor.previousHighIndex = graph->info->graphIndex;
 	cursor.spanIndex = 0;
