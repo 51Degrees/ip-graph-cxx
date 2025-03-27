@@ -488,7 +488,7 @@ static uint64_t extractValue(
 	uint64_t result = 0;
 	for (int i = recordSize - 1, s = bitIndex; i >= 0; i--, s++) {
 		if (GET_BIT(source, s)) {
-			result |= (1UL << i);
+			result |= (1ui64 << i);
 		}
 	}
 	return result;
