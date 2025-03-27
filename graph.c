@@ -486,9 +486,12 @@ static uint64_t extractValue(
 	const uint16_t recordSize,
 	unsigned bitIndex) {
 	uint64_t result = 0;
-	for (int i = recordSize - 1, s = bitIndex; i >= 0; i--, s++) {
+	for (unsigned i = 0, s = bitIndex; i < recordSize; i++, s++) {
 		if (GET_BIT(source, s)) {
-			result |= (1ui64 << i);
+			result = (result << 1) | 1;
+		}
+		else {
+			result = result << 1;
 		}
 	}
 	return result;
