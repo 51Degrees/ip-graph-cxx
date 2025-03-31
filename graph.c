@@ -107,20 +107,19 @@ typedef struct cursor_t {
 	Exception* ex; // Current exception instance
 } Cursor;
 
+#define FIFTYONE_DEGREES_IPI_GRAPH_TRACE
 #ifdef FIFTYONE_DEGREES_IPI_GRAPH_TRACE
 #define TRACE_BOOL(c,m,v) traceBool(c,m,v);
 #define TRACE_INT(c,m,v) traceInt(c,m,v);
 #define TRACE_COMPARE(c) traceCompare(c);
 #define TRACE_LABEL(c,m) traceLabel(c,m);
 #define TRACE_RESULT(c,r) traceResult(c,r);
-#define TRACE_MOVE(c,m) traceMove(c,m);
 #else
 #define TRACE_BOOL(c,m,v)
 #define TRACE_INT(c,m,v)
 #define TRACE_COMPARE(c)
 #define TRACE_LABEL(c,m)
 #define TRACE_RESULT(c,r)
-#define TRACE_MOVE(c,m)
 #endif
 
 // Get the bit as a bool for the byte array and bit index from the left. High
@@ -409,20 +408,24 @@ static int setClusterComparer(
 	Item* item,
 	long curIndex,
 	Exception* exception) {
-	Cluster* cluster = (Cluster*)item->data.ptr;
 
-	// Store a copy of the cluster in the cursor to avoid needing to fetch it
-	// again should it prove to be the required result.
-	cursor->cluster = *cluster;
-
-	// If this cluster is within the require range then its the correct one
-	// to return.
-	if (cursor->index >= cluster->startIndex &&
-		cursor->index <= cluster->endIndex) {
+	// Copy the data to the cursor checking for an exception.
+	if (&cursor->cluster != memcpy(
+		&cursor->cluster,
+		item->data.ptr,
+		item->collection->elementSize)) {
+		EXCEPTION_SET(CORRUPT_DATA);
 		return 0;
 	}
 
-	return cluster->startIndex - cursor->index;
+	// If this cluster is within the require range then its the correct one
+	// to return.
+	if (cursor->index >= cursor->cluster.startIndex &&
+		cursor->index <= cursor->cluster.endIndex) {
+		return 0;
+	}
+
+	return cursor->cluster.startIndex - cursor->index;
 }
 
 static uint32_t setClusterSearch(
@@ -686,8 +689,6 @@ static void cursorMove(Cursor* cursor, uint32_t index) {
 
 	// Set the correct span to use for any compare operations.
 	setSpan(cursor);
-
-	TRACE_MOVE(cursor, "cursorMove");
 
 	if (EXCEPTION_FAILED) return;
 }
@@ -1098,6 +1099,14 @@ static IpiCgArray* ipiGraphCreate(
 		}
 		graphs->items[i].clustersCount = CollectionGetCount(
 			graphs->items[i].clusters);
+
+		// Check that the element size for the clusters is not larger than the
+		// structure.
+		if (graphs->items[i].clusters->elementSize > sizeof(Cluster)) {
+			EXCEPTION_SET(CORRUPT_DATA);
+			fiftyoneDegreesIpiGraphFree(graphs);
+			return NULL;
+		}
 	}
 
 	return graphs;
