@@ -154,6 +154,7 @@ typedef struct fiftyone_degrees_ipi_cg_info_t {
 								pointed to by the leaf nodes of the graph */
 	fiftyoneDegreesCollectionHeader spanBytes;
 	fiftyoneDegreesCollectionHeader spans;
+	fiftyoneDegreesCollectionHeader clusters;
 	fiftyoneDegreesIpiCgMemberNode nodes;
 } fiftyoneDegreesIpiCgInfo;
 #pragma pack(pop)
@@ -167,7 +168,9 @@ typedef struct fiftyone_degrees_ipi_cg_t {
 	fiftyoneDegreesCollection* nodes; /**< Nodes collection */
 	fiftyoneDegreesCollection* spans; /**< Spans collection */
 	fiftyoneDegreesCollection* spanBytes; /**< Span bytes collection */
+	fiftyoneDegreesCollection* clusters; /**< Clusters collection */
 	uint32_t spansCount; /**< Number of spans available */
+	uint32_t clustersCount; /**< Number of clusters available */
 	fiftyoneDegreesCollectionItem itemInfo; /**< Handle for info */
 } fiftyoneDegreesIpiCg;
 

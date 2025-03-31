@@ -73,6 +73,15 @@ typedef struct span_t {
 } Span;
 #pragma pack(pop)
 
+// Structure for the cluster.
+#pragma pack(push, 1)
+typedef struct cluster_t {
+	uint32_t startIndex; // The inclusive start index in the nodes collection
+	uint32_t endIndex; // The inclusive end index in the nodes collection
+	uint32_t spanIndexes[256]; // The span indexes for the cluster
+} Cluster;
+#pragma pack(pop)
+
 // Cursor used to traverse the graph for each of the bits in the IP address.
 typedef struct cursor_t {
 	IpiCg* const graph; // Graph the cursor is working with
@@ -83,8 +92,11 @@ typedef struct cursor_t {
 	uint64_t nodeBits; // The value of the current item in the graph
 	uint32_t index; // The current index in the graph values collection
 	uint32_t previousHighIndex; // The index of the last high index
+	uint32_t clusterIndex; // The current cluster index
+	Cluster cluster; // The current cluster that relates to the node index
+	byte clusterSet; // True after the first time the cluster is set
 	uint32_t spanIndex; // The current span index
-	Span span; // The current span that relates to the record index
+	Span span; // The current span that relates to the node index
 	byte spanLow[VAR_SIZE]; // Low limit for the span
 	byte spanHigh[VAR_SIZE]; // High limit for the span
 	byte spanSet; // True after the first time the span is set
@@ -161,12 +173,17 @@ static uint32_t getValue(Cursor* cursor) {
 	return result;
 }
 
-// Returns the span index from the current node value.
-static uint32_t getSpanIndex(Cursor* cursor) {
+// Returns the cluster span index from the current node value.
+static uint32_t getSpanIndexCluster(Cursor* cursor) {
 	uint32_t result = getMemberValue(
 		cursor->graph->info->nodes.spanIndex,
 		cursor->nodeBits);
 	return result;
+}
+
+// Returns the real span index from the cluster span index.
+static uint32_t getSpanIndex(Cursor* cursor, uint32_t clusterSpanIndex) {
+	return cursor->cluster.spanIndexes[clusterSpanIndex];
 }
 
 // The larger of the two span limits.
@@ -227,6 +244,7 @@ static void traceInt(Cursor* cursor, const char* method, int64_t value) {
 #define IP "IP:" // IP value
 #define LV "LV:" // Low Value
 #define HV "HV:" // High Value
+#define CLI "CLI:" // Cluster Index
 #define SI "SI:" // Span Index
 #define CI "CI:" // Cursor Index
 static void traceCompare(Cursor* cursor) {
@@ -265,8 +283,11 @@ static void traceCompare(Cursor* cursor) {
 	StringBuilderAddChars(cursor->sb, HV, sizeof(HV) - 1);
 	bytesToBinary(cursor, cursor->spanHigh, cursor->span.lengthHigh);
 	StringBuilderAddChar(cursor->sb, ' ');
+	StringBuilderAddChars(cursor->sb, CLI, sizeof(CLI) - 1);
+	StringBuilderAddInteger(cursor->sb, cursor->clusterIndex);
+	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, SI, sizeof(SI) - 1);
-	StringBuilderAddInteger(cursor->sb, getSpanIndex(cursor));
+	StringBuilderAddInteger(cursor->sb, cursor->spanIndex);
 	StringBuilderAddChar(cursor->sb, ' ');
 	StringBuilderAddChars(cursor->sb, CI, sizeof(CI) - 1);
 	StringBuilderAddInteger(cursor->sb, cursor->index);
@@ -381,6 +402,128 @@ static bool isExhausted(Cursor* cursor) {
 	return byteIndex >= sizeof(cursor->ip.value);
 }
 
+// Comparer used to determine if the selected cluster is higher or lower than
+// the target.
+static int setClusterComparer(
+	Cursor* cursor,
+	Item* item,
+	long curIndex,
+	Exception* exception) {
+	Cluster* cluster = (Cluster*)item->data.ptr;
+
+	// Store a copy of the cluster in the cursor to avoid needing to fetch it
+	// again should it prove to be the required result.
+	cursor->cluster = *cluster;
+
+	// If this cluster is within the require range then its the correct one
+	// to return.
+	if (cursor->index >= cluster->startIndex &&
+		cursor->index <= cluster->endIndex) {
+		return 0;
+	}
+
+	return cluster->startIndex - cursor->index;
+}
+
+static uint32_t setClusterSearch(
+	fiftyoneDegreesCollection* collection,
+	fiftyoneDegreesCollectionItem* item,
+	uint32_t lowerIndex,
+	uint32_t upperIndex,
+	Cursor* cursor,
+	fiftyoneDegreesException* exception) {
+	uint32_t upper = upperIndex,
+		lower = lowerIndex,
+		middle = 0;
+	int comparisonResult;
+	DataReset(&item->data);
+	while (lower <= upper) {
+
+		// Get the middle index for the next item to be compared.
+		middle = lower + (upper - lower) / 2;
+
+		// Get the item from the collection checking for NULL or an error.
+		if (collection->get(collection, middle, item, exception) == NULL ||
+			EXCEPTION_OKAY == false) {
+			return 0;
+		}
+
+		// Perform the binary search using the comparer provided with the item
+		// just returned.
+		comparisonResult = setClusterComparer(cursor, item, middle, exception);
+		if (EXCEPTION_OKAY == false) {
+			return 0;
+		}
+
+		if (comparisonResult == 0) {
+			return middle;
+		}
+		else if (comparisonResult > 0) {
+			if (middle) { // guard against underflow of unsigned type
+				upper = middle - 1;
+			}
+			else {
+				lower += 1; // break once iteration finishes
+			}
+		}
+		else {
+			lower = middle + 1;
+		}
+
+		COLLECTION_RELEASE(collection, item);
+	}
+
+	// The item could not be found so return the index of the span that covers 
+	// the range required.
+	return middle;
+}
+
+static void setCluster(Cursor* cursor) {
+	Exception* exception = cursor->ex;
+
+	// If the cluster is set and already at the correct index position then
+	// don't change.
+	if (cursor->clusterSet &&
+		cursor->index >= cursor->cluster.startIndex &&
+		cursor->index <= cursor->cluster.endIndex) {
+		return;
+	}
+
+	// Use binary search to find the index for the cluster. The comparer
+	// records the last cluster checked the cursor will have the correct 
+	// cluster after the search operation.
+	uint32_t index = setClusterSearch(
+		cursor->graph->clusters,
+		&cursor->item,
+		0,
+		cursor->graph->clustersCount - 1,
+		cursor,
+		cursor->ex);
+
+	// Validate that the cluster set has a start index equal to or greater than
+	// the current cursor position.
+	if (cursor->index < cursor->cluster.startIndex) {
+		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
+		return;
+	}
+	if (cursor->index > cursor->cluster.endIndex) {
+		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
+		return;
+	}
+
+	// Validate that the index returned is less than the number of entries in
+	// the graph collection.
+	if (index >= cursor->graph->clustersCount) {
+		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
+		return;
+	}
+
+	// Next time the set method is called the check to see if the cluster needs
+	// to be modified can be applied.
+	cursor->clusterSet = true;
+	cursor->clusterIndex = index;
+}
+
 // Set the span low and high limits from the offset.
 static void setSpanBytes(Cursor* cursor) {
 	Exception* exception = cursor->ex;
@@ -436,7 +579,15 @@ void setSpanLimits(Cursor* cursor) {
 static void setSpan(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 
-	uint32_t spanIndex = getSpanIndex(cursor);
+	// First ensure that the correct cluster is set.
+	setCluster(cursor);
+	if (EXCEPTION_FAILED) return;
+
+	// Get the cluster span index.
+	uint32_t spanIndexCluster = getSpanIndexCluster(cursor);
+
+	// Get the actual span index.
+	uint32_t spanIndex = getSpanIndex(cursor, spanIndexCluster);
 
 	// Check if the span needs to be updated.
 	if (cursor->spanSet && cursor->spanIndex == spanIndex) {
@@ -503,10 +654,6 @@ static uint64_t extractValue(
 static void cursorMove(Cursor* cursor, uint32_t index) {
 	Exception* exception = cursor->ex;
 
-	if (index == 21) {
-		int t = 0;
-	}
-
 	// Work out the byte index for the record index and the starting bit index
 	// within that byte.
 	uint64_t startBitIndex = (
@@ -567,6 +714,10 @@ static Cursor cursorCreate(
 	cursor.nodeBits = 0;
 	cursor.index = 0;
 	cursor.previousHighIndex = graph->info->graphIndex;
+	cursor.clusterIndex = 0;
+	cursor.cluster.startIndex = 0;
+	cursor.cluster.endIndex = 0;
+	cursor.clusterSet = false;
 	cursor.spanIndex = 0;
 	cursor.span.lengthLow = 0;
 	cursor.span.lengthHigh = 0;
@@ -935,6 +1086,18 @@ static IpiCgArray* ipiGraphCreate(
 			fiftyoneDegreesIpiGraphFree(graphs);
 			return NULL;
 		}
+
+		// Create the collection for the clusters.
+		graphs->items[i].clusters = collectionCreate(
+			graphs->items[i].info->clusters,
+			state);
+		if (graphs->items[i].clusters == NULL) {
+			EXCEPTION_SET(CORRUPT_DATA);
+			fiftyoneDegreesIpiGraphFree(graphs);
+			return NULL;
+		}
+		graphs->items[i].clustersCount = CollectionGetCount(
+			graphs->items[i].clusters);
 	}
 
 	return graphs;
