@@ -408,6 +408,9 @@ static int setClusterComparer(
 	Item* item,
 	long curIndex,
 	Exception* exception) {
+#	ifdef _MSC_VER
+	UNREFERENCED_PARAMETER(curIndex);
+#	endif
 
 	// Copy the data to the cursor checking for an exception.
 	if (&cursor->cluster != memcpy(
