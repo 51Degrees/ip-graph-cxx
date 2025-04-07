@@ -107,7 +107,6 @@ typedef struct cursor_t {
 	Exception* ex; // Current exception instance
 } Cursor;
 
-#define FIFTYONE_DEGREES_IPI_GRAPH_TRACE
 #ifdef FIFTYONE_DEGREES_IPI_GRAPH_TRACE
 #define TRACE_BOOL(c,m,v) traceBool(c,m,v);
 #define TRACE_INT(c,m,v) traceInt(c,m,v);
