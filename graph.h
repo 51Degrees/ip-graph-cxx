@@ -116,23 +116,13 @@ typedef struct fiftyone_degrees_ipi_cg_member_t {
 #pragma pack(pop)
 
 /**
- * Collection header information for graph collections.
- */
-#pragma pack(push, 1)
-typedef struct fiftyone_degrees_ipi_cg_member_collection_t {
-	uint32_t length; /**< Number of bytes that form the collection */
-	uint32_t count; /**< Number of bit packed records in the collection */
-	uint32_t startPosition; /**< Position of the first collection byte */
-} fiftyoneDegreesIpiCgMemberCollection;
-#pragma pack(pop)
-
-/**
  * Data structure used for the values collection.
  */
 #pragma pack(push, 1)
 typedef struct fiftyone_degrees_ipi_cg_member_node_t {
-	fiftyoneDegreesIpiCgMemberCollection collection;
+	fiftyoneDegreesCollectionHeader collection;
 	uint16_t recordSize; /**< Number of bits that form the value record */
+	fiftyoneDegreesIpiCgMember spanIndex; /**< Bit for the span index */
 	fiftyoneDegreesIpiCgMember lowFlag; /**< Bit for the low flag */
 	fiftyoneDegreesIpiCgMember value; /**< Bits for the value */
 } fiftyoneDegreesIpiCgMemberNode;
@@ -162,8 +152,9 @@ typedef struct fiftyone_degrees_ipi_cg_info_t {
 								header data structure for the graph. */
 	uint32_t profileGroupCount; /**< The total number of profile groups
 								pointed to by the leaf nodes of the graph */
-	fiftyoneDegreesIpiCgMemberCollection spanBytes;
-	fiftyoneDegreesIpiCgMemberCollection spans;
+	fiftyoneDegreesCollectionHeader spanBytes;
+	fiftyoneDegreesCollectionHeader spans;
+	fiftyoneDegreesCollectionHeader clusters;
 	fiftyoneDegreesIpiCgMemberNode nodes;
 } fiftyoneDegreesIpiCgInfo;
 #pragma pack(pop)
@@ -177,7 +168,9 @@ typedef struct fiftyone_degrees_ipi_cg_t {
 	fiftyoneDegreesCollection* nodes; /**< Nodes collection */
 	fiftyoneDegreesCollection* spans; /**< Spans collection */
 	fiftyoneDegreesCollection* spanBytes; /**< Span bytes collection */
+	fiftyoneDegreesCollection* clusters; /**< Clusters collection */
 	uint32_t spansCount; /**< Number of spans available */
+	uint32_t clustersCount; /**< Number of clusters available */
 	fiftyoneDegreesCollectionItem itemInfo; /**< Handle for info */
 } fiftyoneDegreesIpiCg;
 
