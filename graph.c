@@ -1120,6 +1120,8 @@ void fiftyoneDegreesIpiGraphFree(fiftyoneDegreesIpiCgArray* graphs) {
 			&graphs->items[i].itemInfo);
 		FIFTYONE_DEGREES_COLLECTION_FREE(graphs->items[i].nodes);
 		FIFTYONE_DEGREES_COLLECTION_FREE(graphs->items[i].spans);
+		FIFTYONE_DEGREES_COLLECTION_FREE(graphs->items[i].spanBytes);
+		FIFTYONE_DEGREES_COLLECTION_FREE(graphs->items[i].clusters);
 	}
 	Free(graphs);
 }
