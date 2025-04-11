@@ -69,7 +69,7 @@ typedef struct span_t {
 	union {
 		uint32_t offset; // Offset to the span bytes
 		byte limits[4]; // Array of 4 bytes with the low and high bits
-	};
+	} trail;
 } Span;
 #pragma pack(pop)
 
@@ -537,7 +537,7 @@ static void setSpanBytes(Cursor* cursor) {
 	DataReset(&cursor->item.data);
 	byte* bytes = cursor->graph->spanBytes->get(
 		cursor->graph->spanBytes,
-		cursor->span.offset,
+		cursor->span.trail.offset,
 		&cursor->item,
 		cursor->ex);
 	if (EXCEPTION_FAILED) return;
@@ -569,12 +569,12 @@ static void setSpanBytes(Cursor* cursor) {
 void setSpanLimits(Cursor* cursor) {
 	copyBits(
 		cursor->spanLow,
-		cursor->span.limits,
+		cursor->span.trail.limits,
 		0,
 		cursor->span.lengthLow);
 	copyBits(
 		cursor->spanHigh,
-		cursor->span.limits,
+		cursor->span.trail.limits,
 		cursor->span.lengthLow,
 		cursor->span.lengthHigh);
 }
@@ -724,7 +724,7 @@ static Cursor cursorCreate(
 	cursor.spanIndex = 0;
 	cursor.span.lengthLow = 0;
 	cursor.span.lengthHigh = 0;
-	cursor.span.offset = 0;	
+	cursor.span.trail.offset = 0;
 	cursor.spanSet = false;
 	cursor.compareResult = NO_COMPARE;
 	DataReset(&cursor.item.data);
