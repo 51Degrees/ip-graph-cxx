@@ -168,7 +168,7 @@ static uint32_t getMemberValue(IpiCgMember member, uint64_t source) {
 // Returns the value from the current node value.
 static uint32_t getValue(Cursor* cursor) {
 	uint32_t result = getMemberValue(
-		cursor->graph->info->nodes.value,
+		cursor->graph->info.nodes.value,
 		cursor->nodeBits);
 	return result;
 }
@@ -176,7 +176,7 @@ static uint32_t getValue(Cursor* cursor) {
 // Returns the cluster span index from the current node value.
 static uint32_t getSpanIndexCluster(Cursor* cursor) {
 	uint32_t result = getMemberValue(
-		cursor->graph->info->nodes.spanIndex,
+		cursor->graph->info.nodes.spanIndex,
 		cursor->nodeBits);
 	return result;
 }
@@ -319,7 +319,7 @@ static void traceResult(Cursor* cursor, uint32_t result) {
 // getIsProfileIndex must be called before getting the profile index.
 static uint32_t getProfileIndex(Cursor* cursor) {
 	uint32_t result = (uint32_t)(
-		getValue(cursor) - cursor->graph->info->nodes.collection.count);
+		getValue(cursor) - cursor->graph->info.nodes.collection.count);
 	return result;
 }
 
@@ -327,7 +327,7 @@ static uint32_t getProfileIndex(Cursor* cursor) {
 // index.
 static bool getIsProfileIndex(Cursor* cursor) {
 	bool result = getValue(cursor) >=
-		cursor->graph->info->nodes.collection.count;
+		cursor->graph->info.nodes.collection.count;
 	TRACE_BOOL(cursor, "getIsProfileIndex", result);
 	return result;
 }
@@ -342,7 +342,7 @@ static bool isLeaf(Cursor* cursor) {
 // True if the cursor value has the low flag set, otherwise false.
 static bool isLowFlag(Cursor* cursor) {
 	bool result = getMemberValue(
-		cursor->graph->info->nodes.lowFlag,
+		cursor->graph->info.nodes.lowFlag,
 		cursor->nodeBits) != 0;
 	TRACE_BOOL(cursor, "isLowFlag", result);
 	return result;
@@ -665,7 +665,7 @@ static void cursorMove(Cursor* cursor, uint32_t index) {
 	// within that byte.
 	uint64_t startBitIndex = (
 		index *
-		cursor->graph->info->nodes.recordSize);
+		cursor->graph->info.nodes.recordSize);
 	uint64_t byteIndex = startBitIndex / 8;
 	byte bitIndex = startBitIndex % 8;
 
@@ -682,7 +682,7 @@ static void cursorMove(Cursor* cursor, uint32_t index) {
 	// that contains the node value bits.
 	cursor->nodeBits = extractValue(
 		ptr,
-		cursor->graph->info->nodes.recordSize,
+		cursor->graph->info.nodes.recordSize,
 		bitIndex);
 
 	// Release the data item.
@@ -718,7 +718,7 @@ static Cursor cursorCreate(
 	cursor.bitIndex = 0;
 	cursor.nodeBits = 0;
 	cursor.index = 0;
-	cursor.previousHighIndex = graph->info->graphIndex;
+	cursor.previousHighIndex = graph->info.graphIndex;
 	cursor.clusterIndex = 0;
 	cursor.cluster.startIndex = 0;
 	cursor.cluster.endIndex = 0;
@@ -892,7 +892,7 @@ static uint32_t evaluate(Cursor* cursor) {
 	traceNewLine(cursor);
 
 	// Move the cursor to the entry for the graph.
-	cursorMove(cursor, cursor->graph->info->graphIndex);
+	cursorMove(cursor, cursor->graph->info.graphIndex);
 	if (EXCEPTION_FAILED) return 0;
 
 	do
@@ -949,13 +949,13 @@ static fiftyoneDegreesIpiCgResult toResult(
 		0,
 		false,
 	};
-	if (profileIndex < graph->info->profileCount) {
-		result.offset = profileIndex + graph->info->firstProfileIndex;
+	if (profileIndex < graph->info.profileCount) {
+		result.offset = profileIndex + graph->info.firstProfileIndex;
 	}
 	else {
-		const uint32_t groupIndex = profileIndex - graph->info->profileCount;
-		if (groupIndex < graph->info->profileGroupCount) {
-			result.offset = groupIndex + graph->info->firstProfileGroupIndex;
+		const uint32_t groupIndex = profileIndex - graph->info.profileCount;
+		if (groupIndex < graph->info.profileGroupCount) {
+			result.offset = groupIndex + graph->info.firstProfileGroupIndex;
 			result.isGroupOffset = true;
 		}
 	}
@@ -973,8 +973,8 @@ static fiftyoneDegreesIpiCgResult ipiGraphEvaluate(
 	IpiCg* graph;
 	for (uint32_t i = 0; i < graphs->count; i++) {
 		graph = &graphs->items[i];
-		if (address.type == graph->info->version &&
-			componentId == graph->info->componentId) {
+		if (address.type == graph->info.version &&
+			componentId == graph->info.componentId) {
 			Cursor cursor = cursorCreate(graph, address, sb, exception);
 			profileIndex = evaluate(&cursor);
 			if (EXCEPTION_FAILED) return result;
@@ -1047,7 +1047,7 @@ static IpiCgArray* ipiGraphCreate(
 
 		// Get the information from the collection provided.
 		DataReset(&graphs->items[i].itemInfo.data);
-		graphs->items[i].info = (IpiCgInfo*)collection->get(
+		graphs->items[i].info = *(IpiCgInfo*)collection->get(
 			collection, 
 			i,
 			&graphs->items[i].itemInfo,
@@ -1061,7 +1061,7 @@ static IpiCgArray* ipiGraphCreate(
 
 		// Create the collection for the node values. Must overwrite the count
 		// to zero as it is consumed as a variable width collection.
-		CollectionHeader headerNodes = graphs->items[i].info->nodes.collection;
+		CollectionHeader headerNodes = graphs->items[i].info.nodes.collection;
 		headerNodes.count = 0;
 		graphs->items[i].nodes = collectionCreate(headerNodes, state);
 		if (graphs->items[i].nodes == NULL) {
@@ -1072,7 +1072,7 @@ static IpiCgArray* ipiGraphCreate(
 
 		// Create the collection for the spans.
 		graphs->items[i].spans = collectionCreate(
-			graphs->items[i].info->spans,
+			graphs->items[i].info.spans,
 			state);
 		if (graphs->items[i].spans == NULL) {
 			EXCEPTION_SET(CORRUPT_DATA);
@@ -1084,7 +1084,7 @@ static IpiCgArray* ipiGraphCreate(
 
 		// Create the collection for the span bytes.
 		graphs->items[i].spanBytes = collectionCreate(
-			graphs->items[i].info->spanBytes,
+			graphs->items[i].info.spanBytes,
 			state);
 		if (graphs->items[i].spanBytes == NULL) {
 			EXCEPTION_SET(CORRUPT_DATA);
@@ -1094,7 +1094,7 @@ static IpiCgArray* ipiGraphCreate(
 
 		// Create the collection for the clusters.
 		graphs->items[i].clusters = collectionCreate(
-			graphs->items[i].info->clusters,
+			graphs->items[i].info.clusters,
 			state);
 		if (graphs->items[i].clusters == NULL) {
 			EXCEPTION_SET(CORRUPT_DATA);
