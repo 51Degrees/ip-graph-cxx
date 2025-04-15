@@ -173,7 +173,6 @@ typedef struct fiftyone_degrees_ipi_cg_t {
 	fiftyoneDegreesCollection* clusters; /**< Clusters collection */
 	uint32_t spansCount; /**< Number of spans available */
 	uint32_t clustersCount; /**< Number of clusters available */
-	fiftyoneDegreesCollectionItem itemInfo; /**< Handle for info */
 } fiftyoneDegreesIpiCg;
 
 /**

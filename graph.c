@@ -104,7 +104,6 @@ typedef struct cursor_t {
 	byte spanSet; // True after the first time the span is set
 	CompareResult compareResult; // Result of comparing the current bits to the
 								 // span value
-	Item item; // Data for the current item in the graph
 	StringBuilder* sb; // String builder used for trace information
 	Exception* ex; // Current exception instance
 } Cursor;
@@ -434,7 +433,6 @@ static int setClusterComparer(
 
 static uint32_t setClusterSearch(
 	fiftyoneDegreesCollection* collection,
-	fiftyoneDegreesCollectionItem* item,
 	uint32_t lowerIndex,
 	uint32_t upperIndex,
 	Cursor* cursor,
@@ -443,21 +441,23 @@ static uint32_t setClusterSearch(
 		lower = lowerIndex,
 		middle = 0;
 	int comparisonResult;
-	DataReset(&item->data);
 	while (lower <= upper) {
+		fiftyoneDegreesCollectionItem item;
+		DataReset(&item.data);
 
 		// Get the middle index for the next item to be compared.
 		middle = lower + (upper - lower) / 2;
 
 		// Get the item from the collection checking for NULL or an error.
-		if (collection->get(collection, middle, item, exception) == NULL ||
+		if (collection->get(collection, middle, &item, exception) == NULL ||
 			EXCEPTION_OKAY == false) {
 			return 0;
 		}
 
 		// Perform the binary search using the comparer provided with the item
 		// just returned.
-		comparisonResult = setClusterComparer(cursor, item, middle, exception);
+		comparisonResult = setClusterComparer(cursor, &item, middle, exception);
+		COLLECTION_RELEASE(collection, &item);
 		if (EXCEPTION_OKAY == false) {
 			return 0;
 		}
@@ -476,8 +476,6 @@ static uint32_t setClusterSearch(
 		else {
 			lower = middle + 1;
 		}
-
-		COLLECTION_RELEASE(collection, item);
 	}
 
 	// The item could not be found so return the index of the span that covers 
@@ -499,9 +497,9 @@ static void setCluster(Cursor* cursor) {
 	// Use binary search to find the index for the cluster. The comparer
 	// records the last cluster checked the cursor will have the correct 
 	// cluster after the search operation.
+	Item cursorItem;
 	uint32_t index = setClusterSearch(
 		cursor->graph->clusters,
-		&cursor->item,
 		0,
 		cursor->graph->clustersCount - 1,
 		cursor,
@@ -536,11 +534,12 @@ static void setSpanBytes(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	
 	// Use the current span offset to get the bytes.
-	DataReset(&cursor->item.data);
+	Item cursorItem;
+	DataReset(&cursorItem.data);
 	byte* bytes = cursor->graph->spanBytes->get(
 		cursor->graph->spanBytes,
 		cursor->span.trail.offset,
-		&cursor->item,
+		&cursorItem,
 		cursor->ex);
 	if (EXCEPTION_FAILED) return;
 
@@ -556,7 +555,7 @@ static void setSpanBytes(Cursor* cursor) {
 		cursor->span.lengthLow, 
 		cursor->span.lengthHigh);
 
-	COLLECTION_RELEASE(cursor->graph->spanBytes, &cursor->item);
+	COLLECTION_RELEASE(cursor->graph->spanBytes, &cursorItem);
 
 	if (bitsCompare(
 		cursor->spanLow, 
@@ -609,14 +608,15 @@ static void setSpan(Cursor* cursor) {
 	}
 
 	// Set the span for the current span index.
-	DataReset(&cursor->item.data);
+	Item cursorItem;
+	DataReset(&cursorItem.data);
 	cursor->span = *(Span*)cursor->graph->spans->get(
 		cursor->graph->spans,
 		spanIndex,
-		&cursor->item,
+		&cursorItem,
 		exception);
 	if (EXCEPTION_FAILED) return;
-	COLLECTION_RELEASE(cursor->graph->spans, &cursor->item);
+	COLLECTION_RELEASE(cursor->graph->spans, &cursorItem);
 
 	// Ensure set to 0s before the bits are copied.
 	bytesReset(cursor->spanLow);
@@ -670,11 +670,12 @@ static void cursorMove(Cursor* cursor, uint32_t index) {
 	byte bitIndex = startBitIndex % 8;
 
 	// Get a pointer to that byte from the collection.
-	DataReset(&cursor->item.data);
+	Item cursorItem;
+	DataReset(&cursorItem.data);
 	byte* ptr = (byte*)cursor->graph->nodes->get(
 		cursor->graph->nodes,
 		(uint32_t)byteIndex,
-		&cursor->item,
+		&cursorItem,
 		cursor->ex);
 	if (EXCEPTION_FAILED) return;
 
@@ -686,7 +687,7 @@ static void cursorMove(Cursor* cursor, uint32_t index) {
 		bitIndex);
 
 	// Release the data item.
-	COLLECTION_RELEASE(cursor->item.collection, &cursor->item);
+	COLLECTION_RELEASE(cursorItem.collection, &cursorItem);
 
 	// Set the record index.
 	cursor->index = index;
@@ -729,7 +730,6 @@ static Cursor cursorCreate(
 	cursor.span.trail.offset = 0;
 	cursor.spanSet = false;
 	cursor.compareResult = NO_COMPARE;
-	DataReset(&cursor.item.data);
 	cursor.sb = sb;
 	cursor.ex = exception;
 	return cursor;
@@ -1045,18 +1045,20 @@ static IpiCgArray* ipiGraphCreate(
 		graphs->items[i].nodes = NULL;
 		graphs->items[i].spans = NULL;
 
+		Item itemInfo;
+		DataReset(&itemInfo.data);
+
 		// Get the information from the collection provided.
-		DataReset(&graphs->items[i].itemInfo.data);
 		graphs->items[i].info = *(IpiCgInfo*)collection->get(
 			collection, 
 			i,
-			&graphs->items[i].itemInfo,
+			&itemInfo,
 			exception);
 		if (EXCEPTION_FAILED) {
 			fiftyoneDegreesIpiGraphFree(graphs);
 			return NULL;
 		}
-		COLLECTION_RELEASE(collection, &graphs->items[i].itemInfo);
+		COLLECTION_RELEASE(collection, &itemInfo);
 		graphs->count++;
 
 		// Create the collection for the node values. Must overwrite the count
@@ -1118,8 +1120,6 @@ static IpiCgArray* ipiGraphCreate(
 
 void fiftyoneDegreesIpiGraphFree(fiftyoneDegreesIpiCgArray* graphs) {
 	for (uint32_t i = 0; i < graphs->count; i++) {
-		graphs->items[i].itemInfo.collection->release(
-			&graphs->items[i].itemInfo);
 		FIFTYONE_DEGREES_COLLECTION_FREE(graphs->items[i].nodes);
 		FIFTYONE_DEGREES_COLLECTION_FREE(graphs->items[i].spans);
 		FIFTYONE_DEGREES_COLLECTION_FREE(graphs->items[i].spanBytes);
