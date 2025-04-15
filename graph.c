@@ -1062,7 +1062,7 @@ static IpiCgArray* ipiGraphCreate(
 		// Create the collection for the node values. Must overwrite the count
 		// to zero as it is consumed as a variable width collection.
 		CollectionHeader headerNodes = graphs->items[i].info.nodes.collection;
-		headerNodes.count = 0;
+		headerNodes.count = headerNodes.length;
 		graphs->items[i].nodes = collectionCreate(headerNodes, state);
 		if (graphs->items[i].nodes == NULL) {
 			EXCEPTION_SET(CORRUPT_DATA);
