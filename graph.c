@@ -497,7 +497,6 @@ static void setCluster(Cursor* cursor) {
 	// Use binary search to find the index for the cluster. The comparer
 	// records the last cluster checked the cursor will have the correct 
 	// cluster after the search operation.
-	Item cursorItem;
 	uint32_t index = setClusterSearch(
 		cursor->graph->clusters,
 		0,
@@ -1049,7 +1048,7 @@ static IpiCgArray* ipiGraphCreate(
 		DataReset(&itemInfo.data);
 
 		// Get the information from the collection provided.
-		graphs->items[i].info = *(IpiCgInfo*)collection->get(
+		const IpiCgInfo* const info = (IpiCgInfo*)collection->get(
 			collection, 
 			i,
 			&itemInfo,
@@ -1058,6 +1057,7 @@ static IpiCgArray* ipiGraphCreate(
 			fiftyoneDegreesIpiGraphFree(graphs);
 			return NULL;
 		}
+		graphs->items[i].info = *info;
 		COLLECTION_RELEASE(collection, &itemInfo);
 		graphs->count++;
 
