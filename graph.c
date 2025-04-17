@@ -992,14 +992,29 @@ static fiftyoneDegreesIpiCgResult ipiGraphEvaluate(
 static Collection* ipiGraphCreateFromFile(
 	CollectionHeader header,
 	void* state) {
-	FileCollection* s = (FileCollection*)state;
-	// TODO Apply the same logic to the file reader as the memory reader.
-	return CollectionCreateFromFile(
+	FileCollection * const s = (FileCollection*)state;
+
+	const FileOffset current = FileTell(s->file);
+	if (current < 0) {
+		return NULL;
+	}
+	const FileOffset target = (FileOffset)header.startPosition;
+	const bool shouldRestore = current != target;
+	if (shouldRestore) {
+		if (FileSeek(s->file, target, SEEK_SET)) {
+			return NULL;
+		}
+	}
+	Collection* collection = CollectionCreateFromFile(
 		s->file,
 		s->reader,
 		&s->config,
-		header, 
+		header,
 		CollectionReadFileFixed);
+	if (shouldRestore) {
+		FileSeek(s->file, current, SEEK_SET);
+	}
+	return collection;
 }
 
 // Graph headers might be duplicated across different graphs. As such the 
