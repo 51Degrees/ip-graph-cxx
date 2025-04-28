@@ -166,14 +166,13 @@ typedef struct fiftyone_degrees_ipi_cg_info_t {
  * component graph.
  */
 typedef struct fiftyone_degrees_ipi_cg_t {
-	fiftyoneDegreesIpiCgInfo* info;
+	fiftyoneDegreesIpiCgInfo info;
 	fiftyoneDegreesCollection* nodes; /**< Nodes collection */
 	fiftyoneDegreesCollection* spans; /**< Spans collection */
 	fiftyoneDegreesCollection* spanBytes; /**< Span bytes collection */
 	fiftyoneDegreesCollection* clusters; /**< Clusters collection */
 	uint32_t spansCount; /**< Number of spans available */
 	uint32_t clustersCount; /**< Number of clusters available */
-	fiftyoneDegreesCollectionItem itemInfo; /**< Handle for info */
 } fiftyoneDegreesIpiCg;
 
 /**
