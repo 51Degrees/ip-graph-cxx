@@ -942,7 +942,8 @@ static uint32_t evaluate(Cursor* cursor) {
 // Returns the mapped profile/group offset and type flag.
 static fiftyoneDegreesIpiCgResult toResult(
 	const uint32_t profileIndex,
-	const IpiCg * const graph) {
+	const IpiCg * const graph,
+	Exception *exception) {
 	fiftyoneDegreesIpiCgResult result = {
 		profileIndex,
 		0,
@@ -956,6 +957,9 @@ static fiftyoneDegreesIpiCgResult toResult(
 		if (groupIndex < graph->info.profileGroupCount) {
 			result.offset = groupIndex + graph->info.firstProfileGroupIndex;
 			result.isGroupOffset = true;
+		}
+		else {
+			EXCEPTION_SET(COLLECTION_INDEX_OUT_OF_RANGE);
 		}
 	}
 	return result;
@@ -978,7 +982,7 @@ static fiftyoneDegreesIpiCgResult ipiGraphEvaluate(
 			profileIndex = evaluate(&cursor);
 			if (EXCEPTION_FAILED) return result;
 			TRACE_RESULT(&cursor, profileIndex);
-			result = toResult(profileIndex, graph);
+			result = toResult(profileIndex, graph, exception);
 			break;
 		}
 	}
