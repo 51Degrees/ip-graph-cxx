@@ -662,9 +662,9 @@ static void cursorMove(Cursor* cursor, uint32_t index) {
 
 	// Work out the byte index for the record index and the starting bit index
 	// within that byte.
-	uint64_t startBitIndex = (
-		index *
-		cursor->graph->info.nodes.recordSize);
+	const uint64_t startBitIndex = (
+		((uint64_t)index) *
+		(uint64_t)cursor->graph->info.nodes.recordSize);
 	uint64_t byteIndex = startBitIndex / 8;
 	byte bitIndex = startBitIndex % 8;
 
