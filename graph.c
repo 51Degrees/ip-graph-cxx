@@ -644,12 +644,8 @@ static uint64_t extractValue(
 	unsigned bitIndex) {
 	uint64_t result = 0;
 	for (unsigned i = 0, s = bitIndex; i < recordSize; i++, s++) {
-		if (GET_BIT(source, s)) {
-			result = (result << 1) | 1;
-		}
-		else {
-			result = result << 1;
-		}
+		result <<= 1;
+		result |= GET_BIT(source, s);
 	}
 	return result;
 }
