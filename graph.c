@@ -657,25 +657,25 @@ static uint64_t extractValue(
 // Moves the cursor to the index in the collection returning the value of the
 // record. Uses CgInfo.recordSize to convert the byte array of the record into
 // a 64 bit positive integer.
-static void cursorMove(Cursor* cursor, uint32_t index) {
-	Exception* exception = cursor->ex;
+static void cursorMove(Cursor* const cursor, const uint32_t index) {
+	Exception* const exception = cursor->ex;
 
 	// Work out the byte index for the record index and the starting bit index
 	// within that byte.
 	const uint64_t startBitIndex = (
 		((uint64_t)index) *
 		(uint64_t)cursor->graph->info.nodes.recordSize);
-	uint64_t byteIndex = startBitIndex / 8;
-	byte bitIndex = startBitIndex % 8;
+	const uint64_t byteIndex = startBitIndex / 8;
+	const byte bitIndex = startBitIndex % 8;
 
 	// Get a pointer to that byte from the collection.
 	Item cursorItem;
 	DataReset(&cursorItem.data);
-	byte* ptr = (byte*)cursor->graph->nodes->get(
+	const byte* const ptr = (byte*)cursor->graph->nodes->get(
 		cursor->graph->nodes,
 		(uint32_t)byteIndex,
 		&cursorItem,
-		cursor->ex);
+		exception);
 	if (EXCEPTION_FAILED) return;
 
 	// Move the bits in the bytes pointed to create the unsigned 64 bit integer
