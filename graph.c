@@ -124,7 +124,7 @@ typedef struct cursor_t {
 
 // Get the bit as a bool for the byte array and bit index from the left. High
 // order bit is index 0.
-#define GET_BIT(b,i) ((b[(i) / 8] & (1 << (7 - ((i) % 8)))) != 0)
+#define GET_BIT(b,i) ((((b)[(i) / 8] >> (7 - ((i) % 8))) & 1))
 
 // Sets the bit in the destination byte array where the bit index is from 
 // left. High order bit is index 0.
