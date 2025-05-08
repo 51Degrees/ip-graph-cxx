@@ -124,7 +124,7 @@ typedef struct cursor_t {
 
 // Get the bit as a bool for the byte array and bit index from the left. High
 // order bit is index 0.
-#define GET_BIT(b,i) ((b[(i) / 8] & (1 << (7 - ((i) % 8)))) != 0)
+#define GET_BIT(b,i) ((((b)[(i) / 8] >> (7 - ((i) % 8))) & 1))
 
 // Sets the bit in the destination byte array where the bit index is from 
 // left. High order bit is index 0.
@@ -644,12 +644,8 @@ static uint64_t extractValue(
 	unsigned bitIndex) {
 	uint64_t result = 0;
 	for (unsigned i = 0, s = bitIndex; i < recordSize; i++, s++) {
-		if (GET_BIT(source, s)) {
-			result = (result << 1) | 1;
-		}
-		else {
-			result = result << 1;
-		}
+		result <<= 1;
+		result |= GET_BIT(source, s);
 	}
 	return result;
 }
