@@ -959,7 +959,7 @@ static fiftyoneDegreesIpiCgResult toResult(
 			result.isGroupOffset = true;
 		}
 		else {
-			EXCEPTION_SET(COLLECTION_INDEX_OUT_OF_RANGE);
+			EXCEPTION_SET(CORRUPT_DATA);
 		}
 	}
 	return result;
