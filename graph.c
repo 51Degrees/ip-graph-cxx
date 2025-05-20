@@ -406,29 +406,22 @@ static bool isExhausted(Cursor* cursor) {
 static int setClusterComparer(
 	Cursor* cursor,
 	Item* item,
-	long curIndex,
-	Exception* exception) {
+	long curIndex) {
 #	ifdef _MSC_VER
 	UNREFERENCED_PARAMETER(curIndex);
 #	endif
 
-	// Copy the data to the cursor checking for an exception.
-	if (&cursor->cluster != memcpy(
-		&cursor->cluster,
-		item->data.ptr,
-		item->collection->elementSize)) {
-		EXCEPTION_SET(CORRUPT_DATA);
-		return 0;
-	}
-
+	// Use the data as a cluster
+    Cluster *cluster = (Cluster *)item->data.ptr;
+    
 	// If this cluster is within the require range then its the correct one
 	// to return.
-	if (cursor->index >= cursor->cluster.startIndex &&
-		cursor->index <= cursor->cluster.endIndex) {
+	if (cursor->index >= cluster->startIndex &&
+		cursor->index <= cluster->endIndex) {
 		return 0;
 	}
 
-	return cursor->cluster.startIndex - cursor->index;
+	return cluster->startIndex - cursor->index;
 }
 
 static uint32_t setClusterSearch(
@@ -441,29 +434,34 @@ static uint32_t setClusterSearch(
 		lower = lowerIndex,
 		middle = 0;
 	int comparisonResult;
+    bool itemLoaded = false;
+    fiftyoneDegreesCollectionItem item;
+    
 	while (lower <= upper) {
-		fiftyoneDegreesCollectionItem item;
 		DataReset(&item.data);
 
 		// Get the middle index for the next item to be compared.
 		middle = lower + (upper - lower) / 2;
 
+        if (itemLoaded) {
+            // free previous item if it was loaded
+            COLLECTION_RELEASE(collection, &item);
+            itemLoaded = false;
+        }
+
 		// Get the item from the collection checking for NULL or an error.
 		if (collection->get(collection, middle, &item, exception) == NULL ||
 			EXCEPTION_OKAY == false) {
-			return 0;
+			return 0; // justified just to return 0 we don't have to break out of the loop as item is invalid
 		}
-
+        itemLoaded = true;
+        
 		// Perform the binary search using the comparer provided with the item
 		// just returned.
-		comparisonResult = setClusterComparer(cursor, &item, middle, exception);
-		COLLECTION_RELEASE(collection, &item);
-		if (EXCEPTION_OKAY == false) {
-			return 0;
-		}
+		comparisonResult = setClusterComparer(cursor, &item, middle);
 
 		if (comparisonResult == 0) {
-			return middle;
+            break; // early exit - we will return middle
 		}
 		else if (comparisonResult > 0) {
 			if (middle) { // guard against underflow of unsigned type
@@ -478,8 +476,18 @@ static uint32_t setClusterSearch(
 		}
 	}
 
-	// The item could not be found so return the index of the span that covers 
-	// the range required.
+    if (itemLoaded) {
+        // Before return we must copy the item's memory to cluster as it will be dealloced 
+        if (&cursor->cluster != memcpy(
+            &cursor->cluster,
+            item.data.ptr,
+            item.collection->elementSize)) {
+                EXCEPTION_SET(CORRUPT_DATA);
+                // Set return value to 0
+                middle = 0;
+        }
+        COLLECTION_RELEASE(collection, &item);
+    }
 	return middle;
 }
 
