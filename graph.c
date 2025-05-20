@@ -444,7 +444,7 @@ static uint32_t setClusterSearch(
 		middle = lower + (upper - lower) / 2;
 
         if (itemLoaded) {
-            // free previous item if it was loaded
+            // Free previous item if it was loaded before getting the next item
             COLLECTION_RELEASE(collection, &item);
             itemLoaded = false;
         }
@@ -452,8 +452,11 @@ static uint32_t setClusterSearch(
 		// Get the item from the collection checking for NULL or an error.
 		if (collection->get(collection, middle, &item, exception) == NULL ||
 			EXCEPTION_OKAY == false) {
-			return 0; // justified just to return 0 we don't have to break out of the loop as item is invalid
+            // Justified just to early return 0 as we didn't get an item
+			return 0;
 		}
+        
+        // Otherwise all went well and we loaded an item
         itemLoaded = true;
         
 		// Perform the binary search using the comparer provided with the item
@@ -461,7 +464,7 @@ static uint32_t setClusterSearch(
 		comparisonResult = setClusterComparer(cursor, &item, middle);
 
 		if (comparisonResult == 0) {
-            break; // early exit - we will return middle
+            break; // Early exit - we will copy the item and return middle
 		}
 		else if (comparisonResult > 0) {
 			if (middle) { // guard against underflow of unsigned type
