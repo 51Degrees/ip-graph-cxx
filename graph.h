@@ -252,7 +252,7 @@ EXTERNAL fiftyoneDegreesIpiCgArray* fiftyoneDegreesIpiGraphCreateFromFile(
  * @return the index of the profile (or group) associated with the IP address.
  */
 EXTERNAL fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluate(
-	fiftyoneDegreesIpiCgArray* graphs,
+	const fiftyoneDegreesIpiCgArray* graphs,
 	byte componentId,
 	fiftyoneDegreesIpAddress address,
 	fiftyoneDegreesException* exception);
