@@ -1186,7 +1186,7 @@ fiftyoneDegreesIpiCgArray* fiftyoneDegreesIpiGraphCreateFromFile(
 }
 
 fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluate(
-	fiftyoneDegreesIpiCgArray* const graphs,
+    const fiftyoneDegreesIpiCgArray*  const graphs,
 	const byte componentId,
 	const fiftyoneDegreesIpAddress address,
 	fiftyoneDegreesException* const exception) {
