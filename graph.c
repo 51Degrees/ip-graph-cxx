@@ -646,16 +646,51 @@ static void setSpan(Cursor* cursor) {
 	cursor->spanIndex = spanIndex;
 }
 
-// Extract the value as a uint64_t from the bit packed record provided.
+/// Extract `bitCount` bits from `byteValue` starting at `startBit`
+/// @param byteValue raw (full) byte
+/// @param startBit first bit to extract (0 -- MSB, 7 -- LSB)
+/// @param bitCount how many (less significant) bits to extract
+/// @return extracted value
+static uint8_t extractSubValue(
+	uint8_t byteValue,
+	uint8_t startBit,
+	uint8_t bitCount) {
+	const uint8_t mask = (1 << bitCount) - 1;
+	const uint8_t rightOffset = 8 - startBit - bitCount;
+	return (byteValue >> rightOffset) & mask;
+}
+
+/// Extract the value as uint64_t from the bit packed record provided.
+/// @param source pointer to first byte
+/// @param recordSize how many total bits to extract
+/// @param bitIndex first bit to extract (0 -- MSB, 7 -- LSB) from first byte
+/// @return extracted value
 static uint64_t extractValue(
-	const byte* source,
+	const uint8_t* const source,
 	const uint16_t recordSize,
-	unsigned bitIndex) {
-	uint64_t result = 0;
-	for (unsigned i = 0, s = bitIndex; i < recordSize; i++, s++) {
-		result <<= 1;
-		result |= GET_BIT(source, s);
+	const uint8_t bitIndex) {
+
+	uint64_t result;
+	{
+		const uint8_t bitsAvailable = 8 - bitIndex;
+		result = extractSubValue(
+			*source,
+			bitIndex,
+			(bitsAvailable < recordSize) ? bitsAvailable : recordSize);
 	}
+	int remainingBits = recordSize + bitIndex - 8;
+
+	const uint8_t *nextByte = source + 1;
+	for (; remainingBits >= 8; remainingBits -= 8, ++nextByte) {
+		result <<= 8;
+		result |= *nextByte;
+	}
+
+	if (remainingBits > 0) {
+		result <<= remainingBits;
+		result |= extractSubValue(*nextByte, 0, remainingBits);
+	}
+
 	return result;
 }
 
