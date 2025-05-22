@@ -94,7 +94,7 @@ typedef struct cursor_t {
 	uint64_t nodeBits; // The value of the current item in the graph
 	uint32_t index; // The current index in the graph values collection
 	uint32_t previousHighIndex; // The index of the last high index
-	struct {
+	struct ClusterWrapper {
 		uint32_t index; // The current cluster index
 		const Cluster* ptr; // typed pointer to the memory (for convenience)
 		Item item; // item that owns the memory
@@ -464,8 +464,18 @@ static uint32_t setClusterSearch(
 
 		// Perform the binary search using the comparer provided with the item
 		// just returned.
+        
+        // setClusterComparer does a clever hack by moving ownership of the
+        // item's memory into the cursor->cluster, and moving the ownership of
+        // a previously fetched item from cursor->cluster back to item
+        // essentially it's a swap of pointers, ownership means:
+        // who is responsible for freeing that memory, so essentially after a
+        // call to setClusterComparer the item will be owned by this code,
+        // but it will be the one retrieved on a previous iteration of the loop
 		const int comparisonResult = setClusterComparer(cursor, &item);
-		if (item.collection) { // item is now the one from previous iteration
+        
+        // Item is now the one from previous iteration, so needs to be freed
+		if (item.collection) {
 			COLLECTION_RELEASE(collection, &item);
 		}
 		if (EXCEPTION_OKAY == false) {
