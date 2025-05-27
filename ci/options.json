@@ -1,0 +1,12 @@
+[  
+    {
+        "Image": "ubuntu-latest",
+        "Name": "Ubuntu",
+        "Configuration": "Release",
+        "Arch": "x64",
+        "Language": "dotnet",
+        "LanguageVersion": "8.0.x",
+        "PackageRequirement" : true,
+        "RunPerformance": false
+    } 
+]
