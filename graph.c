@@ -319,11 +319,21 @@ static void traceMove(Cursor* cursor, const char* method) {
 }
 
 #define RESULT "result"
+#define RAWRESULT "raw result"
+#define ISGROUP "is group"
 static void traceResult(const Cursor* const cursor, const uint32_t result) {
 	traceNewLine(cursor);
 	StringBuilderAddChars(cursor->sb, RESULT, sizeof(RESULT) - 1);
 	StringBuilderAddChar(cursor->sb, '=');
-	StringBuilderAddInteger(cursor->sb, (int)result);
+	StringBuilderAddInteger(cursor->sb, (int)result->offset);
+	traceNewLine(cursor);
+	StringBuilderAddChars(cursor->sb, RAWRESULT, sizeof(RAWRESULT) - 1);
+	StringBuilderAddChar(cursor->sb, '=');
+	StringBuilderAddInteger(cursor->sb, (int)result->rawOffset);
+	traceNewLine(cursor);
+	StringBuilderAddChars(cursor->sb, ISGROUP, sizeof(ISGROUP) - 1);
+	StringBuilderAddChar(cursor->sb, '=');
+	StringBuilderAddInteger(cursor->sb, (int)result->isGroupOffset);
 	traceNewLine(cursor);
 }
 
@@ -1000,7 +1010,8 @@ static uint32_t evaluate(Cursor* cursor) {
 // Returns the mapped profile/group offset and type flag.
 static fiftyoneDegreesIpiCgResult toResult(
 	const uint32_t profileIndex,
-	const IpiCg * const graph) {
+	const IpiCg * const graph,
+	Exception *exception) {
 	fiftyoneDegreesIpiCgResult result = {
 		profileIndex,
 		0,
@@ -1014,6 +1025,9 @@ static fiftyoneDegreesIpiCgResult toResult(
 		if (groupIndex < graph->info.profileGroupCount) {
 			result.offset = groupIndex + graph->info.firstProfileGroupIndex;
 			result.isGroupOffset = true;
+		}
+		else {
+			EXCEPTION_SET(CORRUPT_DATA);
 		}
 	}
 	return result;
