@@ -4,6 +4,7 @@
         "Name": "Ubuntu",
         "Configuration": "Release",
         "Arch": "x64",
+        "BuildMethod": "cmake",
         "Language": "dotnet",
         "LanguageVersion": "8.0.x",
         "PackageRequirement" : true,
