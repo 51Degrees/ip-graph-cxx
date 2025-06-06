@@ -321,19 +321,19 @@ static void traceMove(Cursor* cursor, const char* method) {
 #define RESULT "result"
 #define RAWRESULT "raw result"
 #define ISGROUP "is group"
-static void traceResult(const Cursor* const cursor, const uint32_t result) {
+static void traceResult(const Cursor* const cursor, const fiftyoneDegreesIpiCgResult result) {
 	traceNewLine(cursor);
 	StringBuilderAddChars(cursor->sb, RESULT, sizeof(RESULT) - 1);
 	StringBuilderAddChar(cursor->sb, '=');
-	StringBuilderAddInteger(cursor->sb, (int)result->offset);
+	StringBuilderAddInteger(cursor->sb, (int)result.offset);
 	traceNewLine(cursor);
 	StringBuilderAddChars(cursor->sb, RAWRESULT, sizeof(RAWRESULT) - 1);
 	StringBuilderAddChar(cursor->sb, '=');
-	StringBuilderAddInteger(cursor->sb, (int)result->rawOffset);
+	StringBuilderAddInteger(cursor->sb, (int)result.rawOffset);
 	traceNewLine(cursor);
 	StringBuilderAddChars(cursor->sb, ISGROUP, sizeof(ISGROUP) - 1);
 	StringBuilderAddChar(cursor->sb, '=');
-	StringBuilderAddInteger(cursor->sb, (int)result->isGroupOffset);
+	StringBuilderAddInteger(cursor->sb, (int)result.isGroupOffset);
 	traceNewLine(cursor);
 }
 
@@ -1047,8 +1047,8 @@ static fiftyoneDegreesIpiCgResult ipiGraphEvaluate(
 			Cursor cursor = cursorCreate(graph, address, sb, exception);
 			const uint32_t profileIndex = evaluate(&cursor);
 			if (EXCEPTION_OKAY) {
-				TRACE_RESULT(&cursor, profileIndex);
-				result = toResult(profileIndex, graph);
+				result = toResult(profileIndex, graph, exception);
+				TRACE_RESULT(&cursor, result);
 			}
 			cursorReleaseData(&cursor);
 			break;
