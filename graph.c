@@ -467,7 +467,8 @@ static uint32_t setClusterSearch(
 		middle = lower + (upper - lower) / 2;
 
 		// Get the item from the collection checking for NULL or an error.
-		if (collection->get(collection, middle, &item, exception) == NULL ||
+		const CollectionKey key = { middle };
+		if (collection->get(collection, key, &item, exception) == NULL ||
 			EXCEPTION_OKAY == false) {
 			return 0;
 		}
@@ -564,9 +565,10 @@ static void setSpanBytes(Cursor* cursor) {
 	// Use the current span offset to get the bytes.
 	Item cursorItem;
 	DataReset(&cursorItem.data);
+	const CollectionKey spanKey = { cursor->span.trail.offset };
 	byte* bytes = cursor->graph->spanBytes->get(
 		cursor->graph->spanBytes,
-		cursor->span.trail.offset,
+		spanKey,
 		&cursorItem,
 		cursor->ex);
 	if (EXCEPTION_FAILED) return;
@@ -638,9 +640,10 @@ static void setSpan(Cursor* cursor) {
 	// Set the span for the current span index.
 	Item cursorItem;
 	DataReset(&cursorItem.data);
+	const CollectionKey spanKey = { spanIndex };
 	cursor->span = *(Span*)cursor->graph->spans->get(
 		cursor->graph->spans,
-		spanIndex,
+		spanKey,
 		&cursorItem,
 		exception);
 	if (EXCEPTION_FAILED) return;
@@ -730,9 +733,10 @@ static void cursorMove(Cursor* const cursor, const uint32_t index) {
 	// Get a pointer to that byte from the collection.
 	Item cursorItem;
 	DataReset(&cursorItem.data);
+	const CollectionKey byteKey = { (uint32_t)byteIndex };
 	const byte* const ptr = (byte*)cursor->graph->nodes->get(
 		cursor->graph->nodes,
-		(uint32_t)byteIndex,
+		byteKey,
 		&cursorItem,
 		exception);
 	if (EXCEPTION_FAILED) return;
@@ -1135,9 +1139,10 @@ static IpiCgArray* ipiGraphCreate(
 		DataReset(&itemInfo.data);
 
 		// Get the information from the collection provided.
+		const CollectionKey infoKey = { i };
 		const IpiCgInfo* const info = (IpiCgInfo*)collection->get(
 			collection, 
-			i,
+			infoKey,
 			&itemInfo,
 			exception);
 		if (EXCEPTION_FAILED) {
