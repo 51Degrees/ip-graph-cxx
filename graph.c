@@ -1222,9 +1222,16 @@ static IpiCgArray* ipiGraphCreate(
 			graphs->items[i].spans);
 
 		// Create the collection for the span bytes.
-		graphs->items[i].spanBytes = collectionCreate(
-			graphs->items[i].info.spanBytes,
-			state);
+		{
+			const CollectionHeader spanBytesHeader = {
+				graphs->items[i].info.spanBytes.startPosition,
+				graphs->items[i].info.spanBytes.length,
+				graphs->items[i].info.spanBytes.length,
+			};
+			graphs->items[i].spanBytes = collectionCreate(
+				spanBytesHeader,
+				state);
+		}
 		if (graphs->items[i].spanBytes == NULL) {
 			EXCEPTION_SET(CORRUPT_DATA);
 			fiftyoneDegreesIpiGraphFree(graphs);
