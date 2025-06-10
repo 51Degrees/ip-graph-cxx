@@ -26,6 +26,8 @@
  * ********************************************************************* */
 
 #include "graph.h"
+
+#include "../common-cxx/collectionKeyTypes.h"
 #include "../common-cxx/fiftyone.h"
 
 MAP_TYPE(IpiCg)
@@ -467,7 +469,14 @@ static uint32_t setClusterSearch(
 		middle = lower + (upper - lower) / 2;
 
 		// Get the item from the collection checking for NULL or an error.
-		const CollectionKey key = { middle };
+		const CollectionKey key = {
+			middle,
+			{
+				FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_CLUSTER,
+				collection->elementSize,
+				NULL,
+			},
+		};
 		if (collection->get(collection, key, &item, exception) == NULL ||
 			EXCEPTION_OKAY == false) {
 			return 0;
@@ -565,10 +574,19 @@ static void setSpanBytes(Cursor* cursor) {
 	// Use the current span offset to get the bytes.
 	Item cursorItem;
 	DataReset(&cursorItem.data);
-	const CollectionKey spanKey = { cursor->span.trail.offset };
+	const uint32_t totalBits = cursor->span.lengthLow + cursor->span.lengthHigh;
+	const uint32_t totalBytes = (totalBits / 8) + ((totalBits % 8) ? 1 : 0);
+	const CollectionKey spanBytesKey = {
+		cursor->span.trail.offset,
+		{
+			FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_SPAN_BYTES,
+			totalBytes,
+			NULL,
+		},
+	};
 	byte* bytes = cursor->graph->spanBytes->get(
 		cursor->graph->spanBytes,
-		spanKey,
+		spanBytesKey,
 		&cursorItem,
 		cursor->ex);
 	if (EXCEPTION_FAILED) return;
@@ -610,6 +628,12 @@ void setSpanLimits(Cursor* cursor) {
 		cursor->span.lengthHigh);
 }
 
+static const CollectionKeyType CollectionKeyType_Span = {
+	FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_SPAN,
+	sizeof(Span),
+	NULL,
+};
+
 // Sets the cursor span to the correct settings for the current node value 
 // index. Uses the binary search feature of the collection.
 static void setSpan(Cursor* cursor) {
@@ -640,7 +664,10 @@ static void setSpan(Cursor* cursor) {
 	// Set the span for the current span index.
 	Item cursorItem;
 	DataReset(&cursorItem.data);
-	const CollectionKey spanKey = { spanIndex };
+	const CollectionKey spanKey = {
+		spanIndex,
+		CollectionKeyType_Span,
+	};
 	cursor->span = *(Span*)cursor->graph->spans->get(
 		cursor->graph->spans,
 		spanKey,
@@ -733,10 +760,19 @@ static void cursorMove(Cursor* const cursor, const uint32_t index) {
 	// Get a pointer to that byte from the collection.
 	Item cursorItem;
 	DataReset(&cursorItem.data);
-	const CollectionKey byteKey = { (uint32_t)byteIndex };
+	const uint32_t totalBits = cursor->graph->info.nodes.recordSize + bitIndex;
+	const uint32_t totalBytes = (totalBits / 8) + ((totalBits % 8) ? 1 : 0);
+	const CollectionKey nodeBytesKey = {
+		(uint32_t)byteIndex,
+		{
+			FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_NODE_BYTES,
+			totalBytes,
+			NULL,
+		},
+	};
 	const byte* const ptr = (byte*)cursor->graph->nodes->get(
 		cursor->graph->nodes,
-		byteKey,
+		nodeBytesKey,
 		&cursorItem,
 		exception);
 	if (EXCEPTION_FAILED) return;
@@ -1116,6 +1152,12 @@ static Collection* ipiGraphCreateFromMemory(
 	return collection;
 }
 
+static const CollectionKeyType CollectionKeyType_GraphInfo = {
+	FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_INFO,
+	sizeof(IpiCgInfo),
+	NULL,
+};
+
 static IpiCgArray* ipiGraphCreate(
 	Collection* collection,
 	collectionCreate collectionCreate,
@@ -1139,7 +1181,10 @@ static IpiCgArray* ipiGraphCreate(
 		DataReset(&itemInfo.data);
 
 		// Get the information from the collection provided.
-		const CollectionKey infoKey = { i };
+		const CollectionKey infoKey = {
+			i,
+			CollectionKeyType_GraphInfo,
+		};
 		const IpiCgInfo* const info = (IpiCgInfo*)collection->get(
 			collection, 
 			infoKey,
