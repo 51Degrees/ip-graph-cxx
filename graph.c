@@ -726,7 +726,7 @@ static uint64_t extractValue(
 		result = extractSubValue(
 			*source,
 			bitIndex,
-			(bitsAvailable < recordSize) ? bitsAvailable : recordSize);
+			(bitsAvailable < recordSize) ? bitsAvailable : (uint8_t)recordSize);
 	}
 	int remainingBits = recordSize + bitIndex - 8;
 
@@ -738,7 +738,7 @@ static uint64_t extractValue(
 
 	if (remainingBits > 0) {
 		result <<= remainingBits;
-		result |= extractSubValue(*nextByte, 0, remainingBits);
+		result |= extractSubValue(*nextByte, 0, (uint8_t)remainingBits);
 	}
 
 	return result;
