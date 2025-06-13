@@ -90,6 +90,7 @@ typedef struct cluster_t {
 typedef struct cursor_t {
 	const IpiCg* const graph; // Graph the cursor is working with
 	IpAddress const ip; // The IP address source
+	CollectionKeyType nodeBytesKeyType; // keyType for extracting node bytes
 	byte ipValue[VAR_SIZE]; // The value that should be compared to the span
 	byte bitIndex; // Current bit index from high to low in the IP address 
 				   // value array
@@ -461,6 +462,11 @@ static uint32_t setClusterSearch(
 	uint32_t upper = upperIndex,
 		lower = lowerIndex,
 		middle = 0;
+	CollectionKeyType keyType = {
+		FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_CLUSTER,
+		0, // TBD
+		NULL,
+	};
 	while (lower <= upper) {
 		fiftyoneDegreesCollectionItem item;
 		DataReset(&item.data);
@@ -469,11 +475,7 @@ static uint32_t setClusterSearch(
 		middle = lower + (upper - lower) / 2;
 
 		// Get the item from the collection checking for NULL or an error.
-		const CollectionKeyType keyType = {
-			FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_CLUSTER,
-			collection->elementSize,
-			NULL,
-		};
+		keyType.initialBytesCount = collection->elementSize;
 		const CollectionKey key = {
 			middle,
 			&keyType,
@@ -764,14 +766,11 @@ static void cursorMove(Cursor* const cursor, const uint32_t index) {
 	DataReset(&cursorItem.data);
 	const uint32_t totalBits = cursor->graph->info.nodes.recordSize + bitIndex;
 	const uint32_t totalBytes = (totalBits / 8) + ((totalBits % 8) ? 1 : 0);
-	const CollectionKeyType keyType = {
-		FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_NODE_BYTES,
-		totalBytes,
-		NULL,
-	};
+	CollectionKeyType * const nodeBytesKeyType = &cursor->nodeBytesKeyType;
+	nodeBytesKeyType->initialBytesCount = totalBytes;
 	const CollectionKey nodeBytesKey = {
 		(uint32_t)byteIndex,
-		&keyType,
+		nodeBytesKeyType,
 	};
 	const byte* const ptr = (byte*)cursor->graph->nodes->get(
 		cursor->graph->nodes,
@@ -815,7 +814,15 @@ static Cursor cursorCreate(
 	IpAddress ip,
 	StringBuilder* sb,
 	Exception* exception) {
-	Cursor cursor = { graph, ip };
+	Cursor cursor = {
+		graph,
+		ip,
+		{ // nodeBytesKeyType
+			FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_NODE_BYTES,
+			0, // TBD
+			NULL,
+		},
+	};
 	bytesReset(cursor.ipValue);
 	cursor.bitIndex = 0;
 	cursor.nodeBits = 0;
