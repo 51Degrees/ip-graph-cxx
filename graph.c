@@ -480,7 +480,7 @@ static uint32_t setClusterSearch(
 			middle,
 			&keyType,
 		};
-		if (collection->get(collection, key, &item, exception) == NULL ||
+		if (collection->get(collection, &key, &item, exception) == NULL ||
 			EXCEPTION_OKAY == false) {
 			return 0;
 		}
@@ -590,7 +590,7 @@ static void setSpanBytes(Cursor* cursor) {
 	};
 	byte* bytes = cursor->graph->spanBytes->get(
 		cursor->graph->spanBytes,
-		spanBytesKey,
+		&spanBytesKey,
 		&cursorItem,
 		cursor->ex);
 	if (EXCEPTION_FAILED) return;
@@ -674,7 +674,7 @@ static void setSpan(Cursor* cursor) {
 	};
 	cursor->span = *(Span*)cursor->graph->spans->get(
 		cursor->graph->spans,
-		spanKey,
+		&spanKey,
 		&cursorItem,
 		exception);
 	if (EXCEPTION_FAILED) return;
@@ -774,7 +774,7 @@ static void cursorMove(Cursor* const cursor, const uint32_t index) {
 	};
 	const byte* const ptr = (byte*)cursor->graph->nodes->get(
 		cursor->graph->nodes,
-		nodeBytesKey,
+		&nodeBytesKey,
 		&cursorItem,
 		exception);
 	if (EXCEPTION_FAILED) return;
@@ -1197,7 +1197,7 @@ static IpiCgArray* ipiGraphCreate(
 		};
 		const IpiCgInfo* const info = (IpiCgInfo*)collection->get(
 			collection, 
-			infoKey,
+			&infoKey,
 			&itemInfo,
 			exception);
 		if (EXCEPTION_FAILED) {
