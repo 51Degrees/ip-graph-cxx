@@ -469,13 +469,14 @@ static uint32_t setClusterSearch(
 		middle = lower + (upper - lower) / 2;
 
 		// Get the item from the collection checking for NULL or an error.
+		const CollectionKeyType keyType = {
+			FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_CLUSTER,
+			collection->elementSize,
+			NULL,
+		};
 		const CollectionKey key = {
 			middle,
-			{
-				FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_CLUSTER,
-				collection->elementSize,
-				NULL,
-			},
+			&keyType,
 		};
 		if (collection->get(collection, key, &item, exception) == NULL ||
 			EXCEPTION_OKAY == false) {
@@ -576,13 +577,14 @@ static void setSpanBytes(Cursor* cursor) {
 	DataReset(&cursorItem.data);
 	const uint32_t totalBits = cursor->span.lengthLow + cursor->span.lengthHigh;
 	const uint32_t totalBytes = (totalBits / 8) + ((totalBits % 8) ? 1 : 0);
+	const CollectionKeyType keyType = {
+		FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_SPAN_BYTES,
+		totalBytes,
+		NULL,
+	};
 	const CollectionKey spanBytesKey = {
 		cursor->span.trail.offset,
-		{
-			FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_SPAN_BYTES,
-			totalBytes,
-			NULL,
-		},
+		&keyType,
 	};
 	byte* bytes = cursor->graph->spanBytes->get(
 		cursor->graph->spanBytes,
@@ -666,7 +668,7 @@ static void setSpan(Cursor* cursor) {
 	DataReset(&cursorItem.data);
 	const CollectionKey spanKey = {
 		spanIndex,
-		CollectionKeyType_Span,
+		&CollectionKeyType_Span,
 	};
 	cursor->span = *(Span*)cursor->graph->spans->get(
 		cursor->graph->spans,
@@ -762,13 +764,14 @@ static void cursorMove(Cursor* const cursor, const uint32_t index) {
 	DataReset(&cursorItem.data);
 	const uint32_t totalBits = cursor->graph->info.nodes.recordSize + bitIndex;
 	const uint32_t totalBytes = (totalBits / 8) + ((totalBits % 8) ? 1 : 0);
+	const CollectionKeyType keyType = {
+		FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_NODE_BYTES,
+		totalBytes,
+		NULL,
+	};
 	const CollectionKey nodeBytesKey = {
 		(uint32_t)byteIndex,
-		{
-			FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_NODE_BYTES,
-			totalBytes,
-			NULL,
-		},
+		&keyType,
 	};
 	const byte* const ptr = (byte*)cursor->graph->nodes->get(
 		cursor->graph->nodes,
@@ -1183,7 +1186,7 @@ static IpiCgArray* ipiGraphCreate(
 		// Get the information from the collection provided.
 		const CollectionKey infoKey = {
 			i,
-			CollectionKeyType_GraphInfo,
+			&CollectionKeyType_GraphInfo,
 		};
 		const IpiCgInfo* const info = (IpiCgInfo*)collection->get(
 			collection, 
