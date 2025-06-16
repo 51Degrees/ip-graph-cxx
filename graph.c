@@ -433,8 +433,8 @@ static bool isExhausted(const Cursor* const cursor) {
 // Comparer used to determine if the selected cluster is higher or lower than
 // the target.
 static int setClusterComparer(
-	Cursor* cursor,
-	Item* item) {
+	Cursor* const cursor,
+	Item* const item) {
 	// Swap the ownership, so that Cursor now owns this item
 	{
 		const Item t = cursor->cluster.item;
@@ -445,12 +445,14 @@ static int setClusterComparer(
 
 	// If this cluster is within the require range then its the correct one
 	// to return.
-	if (cursor->index >= cursor->cluster.ptr->startIndex &&
-		cursor->index <= cursor->cluster.ptr->endIndex) {
+	const uint32_t searchIndex = cursor->index;
+	const uint32_t startIndex = cursor->cluster.ptr->startIndex;
+	if (searchIndex >= startIndex &&
+		searchIndex <= cursor->cluster.ptr->endIndex) {
 		return 0;
 	}
 
-	return cursor->cluster.ptr->startIndex - cursor->index;
+	return (startIndex > searchIndex) ? 1 : (startIndex < searchIndex) ? -1 : 0;
 }
 
 static uint32_t setClusterSearch(
