@@ -454,7 +454,7 @@ static int setClusterComparer(
 }
 
 static uint32_t setClusterSearch(
-	fiftyoneDegreesCollection* const collection,
+	const fiftyoneDegreesCollection* const collection,
 	const uint32_t lowerIndex,
 	const uint32_t upperIndex,
 	Cursor* const cursor,
@@ -462,9 +462,9 @@ static uint32_t setClusterSearch(
 	uint32_t upper = upperIndex,
 		lower = lowerIndex,
 		middle = 0;
-	CollectionKeyType keyType = {
+	const CollectionKeyType keyType = {
 		FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_CLUSTER,
-		0, // TBD
+		collection->elementSize, // TBD
 		NULL,
 	};
 	while (lower <= upper) {
@@ -475,7 +475,6 @@ static uint32_t setClusterSearch(
 		middle = lower + (upper - lower) / 2;
 
 		// Get the item from the collection checking for NULL or an error.
-		keyType.initialBytesCount = collection->elementSize;
 		const CollectionKey key = {
 			middle,
 			&keyType,
