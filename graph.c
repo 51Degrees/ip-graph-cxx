@@ -464,7 +464,7 @@ static uint32_t setClusterSearch(
 		middle = 0;
 	const CollectionKeyType keyType = {
 		FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_CLUSTER,
-		collection->elementSize, // TBD
+		collection->elementSize,
 		NULL,
 	};
 	while (lower <= upper) {
