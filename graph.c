@@ -671,12 +671,13 @@ static void setSpan(Cursor* cursor) {
 		spanIndex,
 		&CollectionKeyType_Span,
 	};
-	cursor->span = *(Span*)cursor->graph->spans->get(
+	Span * const span = (Span*)cursor->graph->spans->get(
 		cursor->graph->spans,
 		&spanKey,
 		&cursorItem,
 		exception);
-	if (EXCEPTION_FAILED) return;
+	if (!span || EXCEPTION_FAILED) return;
+	cursor->span = *span;
 	COLLECTION_RELEASE(cursor->graph->spans, &cursorItem);
 
 	// Ensure set to 0s before the bits are copied.
