@@ -469,10 +469,12 @@ static uint32_t setClusterSearch(
 		collection->elementSize,
 		NULL,
 	};
-	while (lower <= upper) {
-		fiftyoneDegreesCollectionItem item;
-		DataReset(&item.data);
 
+	fiftyoneDegreesCollectionItem item;
+	DataReset(&item.data);
+	item.collection = NULL;
+
+	while (lower <= upper) {
 		// Get the middle index for the next item to be compared.
 		middle = lower + (upper - lower) / 2;
 
@@ -481,8 +483,8 @@ static uint32_t setClusterSearch(
 			middle,
 			&keyType,
 		};
-		if (collection->get(collection, &key, &item, exception) == NULL ||
-			EXCEPTION_OKAY == false) {
+		if (!collection->get(collection, &key, &item, exception)
+			|| EXCEPTION_FAILED) {
 			return 0;
 		}
 
@@ -502,7 +504,7 @@ static uint32_t setClusterSearch(
 		if (item.collection) {
 			COLLECTION_RELEASE(collection, &item);
 		}
-		if (EXCEPTION_OKAY == false) {
+		if (EXCEPTION_FAILED) {
 			return 0;
 		}
 
@@ -547,6 +549,10 @@ static void setCluster(Cursor* cursor) {
 		cursor->graph->clustersCount - 1,
 		cursor,
 		cursor->ex);
+
+	if (EXCEPTION_FAILED) {
+		return;
+	}
 
 	// Validate that the cluster set has a start index equal to or greater than
 	// the current cursor position.
@@ -779,7 +785,9 @@ static void cursorMove(Cursor* const cursor, const uint32_t index) {
 		&nodeBytesKey,
 		&cursorItem,
 		exception);
-	if (EXCEPTION_FAILED) return;
+	if (!ptr || EXCEPTION_FAILED) {
+		return;
+	}
 
 	// Move the bits in the bytes pointed to create the unsigned 64 bit integer
 	// that contains the node value bits.
@@ -851,6 +859,7 @@ static void cursorReleaseData(Cursor* const cursor) {
 		COLLECTION_RELEASE(
 			cursor->cluster.item.collection,
 			&cursor->cluster.item);
+		cursor->cluster.ptr = NULL;
 	}
 }
 
@@ -1100,7 +1109,9 @@ static fiftyoneDegreesIpiCgResult ipiGraphEvaluate(
 			const uint32_t profileIndex = evaluate(&cursor);
 			if (EXCEPTION_OKAY) {
 				result = toResult(profileIndex, graph, exception);
-				TRACE_RESULT(&cursor, result);
+				if (EXCEPTION_OKAY) {
+					TRACE_RESULT(&cursor, result);
+				}
 			}
 			cursorReleaseData(&cursor);
 			break;
@@ -1202,7 +1213,7 @@ static IpiCgArray* ipiGraphCreate(
 			&infoKey,
 			&itemInfo,
 			exception);
-		if (EXCEPTION_FAILED) {
+		if (!info || EXCEPTION_FAILED) {
 			fiftyoneDegreesIpiGraphFree(graphs);
 			return NULL;
 		}
