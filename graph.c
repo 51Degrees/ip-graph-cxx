@@ -26,6 +26,8 @@
  * ********************************************************************* */
 
 #include "graph.h"
+
+#include "../common-cxx/collectionKeyTypes.h"
 #include "../common-cxx/fiftyone.h"
 
 MAP_TYPE(IpiCg)
@@ -88,6 +90,7 @@ typedef struct cluster_t {
 typedef struct cursor_t {
 	const IpiCg* const graph; // Graph the cursor is working with
 	IpAddress const ip; // The IP address source
+	CollectionKeyType nodeBytesKeyType; // keyType for extracting node bytes
 	byte ipValue[VAR_SIZE]; // The value that should be compared to the span
 	byte bitIndex; // Current bit index from high to low in the IP address 
 				   // value array
@@ -430,8 +433,8 @@ static bool isExhausted(const Cursor* const cursor) {
 // Comparer used to determine if the selected cluster is higher or lower than
 // the target.
 static int setClusterComparer(
-	Cursor* cursor,
-	Item* item) {
+	Cursor* const cursor,
+	Item* const item) {
 	// Swap the ownership, so that Cursor now owns this item
 	{
 		const Item t = cursor->cluster.item;
@@ -442,16 +445,18 @@ static int setClusterComparer(
 
 	// If this cluster is within the require range then its the correct one
 	// to return.
-	if (cursor->index >= cursor->cluster.ptr->startIndex &&
-		cursor->index <= cursor->cluster.ptr->endIndex) {
+	const uint32_t searchIndex = cursor->index;
+	const uint32_t startIndex = cursor->cluster.ptr->startIndex;
+	if (searchIndex >= startIndex &&
+		searchIndex <= cursor->cluster.ptr->endIndex) {
 		return 0;
 	}
 
-	return cursor->cluster.ptr->startIndex - cursor->index;
+	return (startIndex > searchIndex) ? 1 : (startIndex < searchIndex) ? -1 : 0;
 }
 
 static uint32_t setClusterSearch(
-	fiftyoneDegreesCollection* const collection,
+	const fiftyoneDegreesCollection* const collection,
 	const uint32_t lowerIndex,
 	const uint32_t upperIndex,
 	Cursor* const cursor,
@@ -459,16 +464,27 @@ static uint32_t setClusterSearch(
 	uint32_t upper = upperIndex,
 		lower = lowerIndex,
 		middle = 0;
-	while (lower <= upper) {
-		fiftyoneDegreesCollectionItem item;
-		DataReset(&item.data);
+	const CollectionKeyType keyType = {
+		FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_CLUSTER,
+		collection->elementSize,
+		NULL,
+	};
 
+	fiftyoneDegreesCollectionItem item;
+	DataReset(&item.data);
+	item.collection = NULL;
+
+	while (lower <= upper) {
 		// Get the middle index for the next item to be compared.
 		middle = lower + (upper - lower) / 2;
 
 		// Get the item from the collection checking for NULL or an error.
-		if (collection->get(collection, middle, &item, exception) == NULL ||
-			EXCEPTION_OKAY == false) {
+		const CollectionKey key = {
+			middle,
+			&keyType,
+		};
+		if (!collection->get(collection, &key, &item, exception)
+			|| EXCEPTION_FAILED) {
 			return 0;
 		}
 
@@ -488,7 +504,7 @@ static uint32_t setClusterSearch(
 		if (item.collection) {
 			COLLECTION_RELEASE(collection, &item);
 		}
-		if (EXCEPTION_OKAY == false) {
+		if (EXCEPTION_FAILED) {
 			return 0;
 		}
 
@@ -534,6 +550,10 @@ static void setCluster(Cursor* cursor) {
 		cursor,
 		cursor->ex);
 
+	if (EXCEPTION_FAILED) {
+		return;
+	}
+
 	// Validate that the cluster set has a start index equal to or greater than
 	// the current cursor position.
 	if (cursor->index < cursor->cluster.ptr->startIndex) {
@@ -564,9 +584,20 @@ static void setSpanBytes(Cursor* cursor) {
 	// Use the current span offset to get the bytes.
 	Item cursorItem;
 	DataReset(&cursorItem.data);
+	const uint32_t totalBits = cursor->span.lengthLow + cursor->span.lengthHigh;
+	const uint32_t totalBytes = (totalBits / 8) + ((totalBits % 8) ? 1 : 0);
+	const CollectionKeyType keyType = {
+		FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_SPAN_BYTES,
+		totalBytes,
+		NULL,
+	};
+	const CollectionKey spanBytesKey = {
+		cursor->span.trail.offset,
+		&keyType,
+	};
 	byte* bytes = cursor->graph->spanBytes->get(
 		cursor->graph->spanBytes,
-		cursor->span.trail.offset,
+		&spanBytesKey,
 		&cursorItem,
 		cursor->ex);
 	if (EXCEPTION_FAILED) return;
@@ -608,6 +639,12 @@ void setSpanLimits(Cursor* cursor) {
 		cursor->span.lengthHigh);
 }
 
+static const CollectionKeyType CollectionKeyType_Span = {
+	FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_SPAN,
+	sizeof(Span),
+	NULL,
+};
+
 // Sets the cursor span to the correct settings for the current node value 
 // index. Uses the binary search feature of the collection.
 static void setSpan(Cursor* cursor) {
@@ -638,12 +675,17 @@ static void setSpan(Cursor* cursor) {
 	// Set the span for the current span index.
 	Item cursorItem;
 	DataReset(&cursorItem.data);
-	cursor->span = *(Span*)cursor->graph->spans->get(
-		cursor->graph->spans,
+	const CollectionKey spanKey = {
 		spanIndex,
+		&CollectionKeyType_Span,
+	};
+	Span * const span = (Span*)cursor->graph->spans->get(
+		cursor->graph->spans,
+		&spanKey,
 		&cursorItem,
 		exception);
-	if (EXCEPTION_FAILED) return;
+	if (!span || EXCEPTION_FAILED) return;
+	cursor->span = *span;
 	COLLECTION_RELEASE(cursor->graph->spans, &cursorItem);
 
 	// Ensure set to 0s before the bits are copied.
@@ -730,12 +772,22 @@ static void cursorMove(Cursor* const cursor, const uint32_t index) {
 	// Get a pointer to that byte from the collection.
 	Item cursorItem;
 	DataReset(&cursorItem.data);
+	const uint32_t totalBits = cursor->graph->info.nodes.recordSize + bitIndex;
+	const uint32_t totalBytes = (totalBits / 8) + ((totalBits % 8) ? 1 : 0);
+	CollectionKeyType * const nodeBytesKeyType = &cursor->nodeBytesKeyType;
+	nodeBytesKeyType->initialBytesCount = totalBytes;
+	const CollectionKey nodeBytesKey = {
+		(uint32_t)byteIndex,
+		nodeBytesKeyType,
+	};
 	const byte* const ptr = (byte*)cursor->graph->nodes->get(
 		cursor->graph->nodes,
-		(uint32_t)byteIndex,
+		&nodeBytesKey,
 		&cursorItem,
 		exception);
-	if (EXCEPTION_FAILED) return;
+	if (!ptr || EXCEPTION_FAILED) {
+		return;
+	}
 
 	// Move the bits in the bytes pointed to create the unsigned 64 bit integer
 	// that contains the node value bits.
@@ -772,7 +824,15 @@ static Cursor cursorCreate(
 	IpAddress ip,
 	StringBuilder* sb,
 	Exception* exception) {
-	Cursor cursor = { graph, ip };
+	Cursor cursor = {
+		graph,
+		ip,
+		{ // nodeBytesKeyType
+			FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_DATA_NODE_BYTES,
+			0, // TBD
+			NULL,
+		},
+	};
 	bytesReset(cursor.ipValue);
 	cursor.bitIndex = 0;
 	cursor.nodeBits = 0;
@@ -799,6 +859,7 @@ static void cursorReleaseData(Cursor* const cursor) {
 		COLLECTION_RELEASE(
 			cursor->cluster.item.collection,
 			&cursor->cluster.item);
+		cursor->cluster.ptr = NULL;
 	}
 }
 
@@ -1048,7 +1109,9 @@ static fiftyoneDegreesIpiCgResult ipiGraphEvaluate(
 			const uint32_t profileIndex = evaluate(&cursor);
 			if (EXCEPTION_OKAY) {
 				result = toResult(profileIndex, graph, exception);
-				TRACE_RESULT(&cursor, result);
+				if (EXCEPTION_OKAY) {
+					TRACE_RESULT(&cursor, result);
+				}
 			}
 			cursorReleaseData(&cursor);
 			break;
@@ -1112,6 +1175,12 @@ static Collection* ipiGraphCreateFromMemory(
 	return collection;
 }
 
+static const CollectionKeyType CollectionKeyType_GraphInfo = {
+	FIFTYONE_DEGREES_COLLECTION_ENTRY_TYPE_GRAPH_INFO,
+	sizeof(IpiCgInfo),
+	NULL,
+};
+
 static IpiCgArray* ipiGraphCreate(
 	Collection* collection,
 	collectionCreate collectionCreate,
@@ -1135,12 +1204,16 @@ static IpiCgArray* ipiGraphCreate(
 		DataReset(&itemInfo.data);
 
 		// Get the information from the collection provided.
+		const CollectionKey infoKey = {
+			i,
+			&CollectionKeyType_GraphInfo,
+		};
 		const IpiCgInfo* const info = (IpiCgInfo*)collection->get(
 			collection, 
-			i,
+			&infoKey,
 			&itemInfo,
 			exception);
-		if (EXCEPTION_FAILED) {
+		if (!info || EXCEPTION_FAILED) {
 			fiftyoneDegreesIpiGraphFree(graphs);
 			return NULL;
 		}
@@ -1172,9 +1245,16 @@ static IpiCgArray* ipiGraphCreate(
 			graphs->items[i].spans);
 
 		// Create the collection for the span bytes.
-		graphs->items[i].spanBytes = collectionCreate(
-			graphs->items[i].info.spanBytes,
-			state);
+		{
+			const CollectionHeader spanBytesHeader = {
+				graphs->items[i].info.spanBytes.startPosition,
+				graphs->items[i].info.spanBytes.length,
+				graphs->items[i].info.spanBytes.length,
+			};
+			graphs->items[i].spanBytes = collectionCreate(
+				spanBytesHeader,
+				state);
+		}
 		if (graphs->items[i].spanBytes == NULL) {
 			EXCEPTION_SET(CORRUPT_DATA);
 			fiftyoneDegreesIpiGraphFree(graphs);
