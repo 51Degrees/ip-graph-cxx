@@ -97,6 +97,16 @@ typedef struct cursor_t {
 	uint64_t nodeBits; // The value of the current item in the graph
 	uint32_t index; // The current index in the graph values collection
 	uint32_t previousHighIndex; // The index of the last high index
+	uint16_t previousHighPathLength; // Path length when the last high index
+									 // was recorded
+	uint16_t previousHighBitIndex; // Path bit index when the last high index
+								   // was recorded
+	uint16_t pathBitIndex; // Number of IP address bits covered by the path
+						   // entries recorded so far
+	uint16_t pathLength; // Number of entries in pathNodes
+	fiftyoneDegreesIpiCgPathNode pathNodes[
+		FIFTYONE_DEGREES_IPI_GRAPH_PATH_NODES_MAX]; // Branch decisions taken
+													// to reach the leaf
 	struct ClusterWrapper {
 		uint32_t index; // The current cluster index
 		const Cluster* ptr; // typed pointer to the memory (for convenience)
@@ -131,9 +141,9 @@ typedef struct cursor_t {
 // order bit is index 0.
 #define GET_BIT(b,i) ((((b)[(i) / 8] >> (7 - ((i) % 8))) & 1))
 
-// Sets the bit in the destination byte array where the bit index is from 
+// Sets the bit in the destination byte array where the bit index is from
 // left. High order bit is index 0.
-#define SET_BIT(b,i) (b[i / 8] |= 1 << (7 - (i % 8)))
+#define SET_BIT(b,i) ((b)[(i) / 8] |= 1 << (7 - ((i) % 8)))
 
 // Outputs to the string builder the bits from left to right from the bytes
 // provided.
@@ -818,6 +828,27 @@ static void cursorMoveNext(Cursor* cursor) {
 	cursorMove(cursor, cursor->index + 1);
 }
 
+// Records the branch decision about to be taken at the current cursor
+// position. The bits of the span limit followed are the bits of the IP
+// address associated with the leaf that will eventually be reached, starting
+// at the current path bit index.
+static void pathAdd(Cursor* cursor, const bool isHigh) {
+	Exception* exception = cursor->ex;
+	if (cursor->pathLength >=
+		FIFTYONE_DEGREES_IPI_GRAPH_PATH_NODES_MAX) {
+		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
+		return;
+	}
+	fiftyoneDegreesIpiCgPathNode* const entry =
+		&cursor->pathNodes[cursor->pathLength++];
+	entry->nodeIndex = cursor->index;
+	entry->bitIndex = cursor->pathBitIndex;
+	entry->isHigh = isHigh ? 1 : 0;
+	cursor->pathBitIndex += isHigh ?
+		cursor->span.lengthHigh :
+		cursor->span.lengthLow;
+}
+
 // Creates a cursor ready for evaluation with the graph and IP address.
 static Cursor cursorCreate(
 	const IpiCg* const graph,
@@ -838,6 +869,10 @@ static Cursor cursorCreate(
 	cursor.nodeBits = 0;
 	cursor.index = 0;
 	cursor.previousHighIndex = graph->info.graphIndex;
+	cursor.previousHighPathLength = 0;
+	cursor.previousHighBitIndex = 0;
+	cursor.pathBitIndex = 0;
+	cursor.pathLength = 0;
 	cursor.cluster.index = 0;
 	cursor.cluster.ptr = NULL;
 	DataReset(&cursor.cluster.item.data);
@@ -899,7 +934,15 @@ static bool selectLow(Cursor* cursor) {
 static bool cursorMoveBackLow(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	TRACE_LABEL(cursor, "cursorMoveBack");
+
+	// Discard the path entries recorded after the previous high entry as the
+	// low entry is now followed at that node instead.
+	cursor->pathLength = cursor->previousHighPathLength;
+	cursor->pathBitIndex = cursor->previousHighBitIndex;
+
 	cursorMove(cursor, cursor->previousHighIndex);
+	if (EXCEPTION_FAILED) return true;
+	pathAdd(cursor, false);
 	if (EXCEPTION_FAILED) return true;
 	return selectLow(cursor);
 }
@@ -939,9 +982,10 @@ static bool selectHigh(Cursor* cursor) {
 static void selectCompleteHigh(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	TRACE_LABEL(cursor, "selectCompleteHigh");
-	while (selectHigh(cursor) == false) {
+	do {
+		pathAdd(cursor, true);
 		if (EXCEPTION_FAILED) return;
-	}
+	} while (selectHigh(cursor) == false && EXCEPTION_OKAY);
 }
 
 // Follows the low entry before taking all the high entries until a leaf is
@@ -949,10 +993,13 @@ static void selectCompleteHigh(Cursor* cursor) {
 static void selectCompleteLowHigh(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	TRACE_LABEL(cursor, "selectCompleteLowHigh");
+	pathAdd(cursor, false);
+	if (EXCEPTION_FAILED) return;
 	if (selectLow(cursor) == false) {
-		while (selectHigh(cursor) == false) {
+		do {
+			pathAdd(cursor, true);
 			if (EXCEPTION_FAILED) return;
-		}
+		} while (selectHigh(cursor) == false && EXCEPTION_OKAY);
 	}
 }
 
@@ -963,9 +1010,10 @@ static void selectCompleteLow(Cursor* cursor) {
 	TRACE_LABEL(cursor, "selectCompleteLow");
 	if (cursorMoveBackLow(cursor) == false) {
 		if (EXCEPTION_FAILED) return;
-		while (selectHigh(cursor) == false) {
+		do {
+			pathAdd(cursor, true);
 			if (EXCEPTION_FAILED) return;
-		}
+		} while (selectHigh(cursor) == false && EXCEPTION_OKAY);
 	}
 }
 
@@ -999,6 +1047,8 @@ static void compareIpToSpan(Cursor* cursor) {
 	else if (highCompare == 0) {
 		cursor->compareResult = EQUAL_HIGH;
 		cursor->previousHighIndex = cursor->index;
+		cursor->previousHighPathLength = cursor->pathLength;
+		cursor->previousHighBitIndex = cursor->pathBitIndex;
 	}
 	else if (highCompare > 0) {
 		cursor->compareResult = GREATER_THAN_HIGH;
@@ -1037,6 +1087,8 @@ static uint32_t evaluate(Cursor* cursor) {
 		case EQUAL_LOW:
 			// Advance the bits before the cursor is changed.
 			cursor->bitIndex += cursor->span.lengthLow;
+			pathAdd(cursor, false);
+			if (EXCEPTION_FAILED) return 0;
 			found = selectLow(cursor);
 			if (EXCEPTION_FAILED) return 0;
 			break;
@@ -1048,6 +1100,8 @@ static uint32_t evaluate(Cursor* cursor) {
 		case EQUAL_HIGH:
 			// Advance the bits before the cursor is changed.
 			cursor->bitIndex += cursor->span.lengthHigh;
+			pathAdd(cursor, true);
+			if (EXCEPTION_FAILED) return 0;
 			found = selectHigh(cursor);
 			if (EXCEPTION_FAILED) return 0;
 			break;
@@ -1066,18 +1120,28 @@ static uint32_t evaluate(Cursor* cursor) {
 }
 
 // Applies profile mappings from graph info to evaluation result.
+// cursor - Cursor that evaluated the graph containing the path to the leaf.
 // profileIndex - Value returned by the graph.
 // graph - Graph that returned the value.
 // Returns the mapped profile/group offset and type flag.
 static fiftyoneDegreesIpiCgResult toResult(
+	const Cursor* const cursor,
 	const uint32_t profileIndex,
 	const IpiCg * const graph,
 	Exception *exception) {
-	fiftyoneDegreesIpiCgResult result = {
-		profileIndex,
-		0,
-		false,
-	};
+	fiftyoneDegreesIpiCgResult result = FIFTYONE_DEGREES_IPI_CG_RESULT_DEFAULT;
+	result.rawOffset = profileIndex;
+	result.offset = 0;
+	result.isGroupOffset = false;
+
+	// Copy the path to the leaf so that the start and end IP addresses can
+	// be derived from the result if required.
+	result.graph = graph;
+	result.pathLength = cursor->pathLength;
+	for (uint16_t i = 0; i < cursor->pathLength; i++) {
+		result.pathNodes[i] = cursor->pathNodes[i];
+	}
+
 	if (profileIndex < graph->info.profileCount) {
 		result.offset = profileIndex + graph->info.firstProfileIndex;
 	}
@@ -1108,7 +1172,7 @@ static fiftyoneDegreesIpiCgResult ipiGraphEvaluate(
 			Cursor cursor = cursorCreate(graph, address, sb, exception);
 			const uint32_t profileIndex = evaluate(&cursor);
 			if (EXCEPTION_OKAY) {
-				result = toResult(profileIndex, graph, exception);
+				result = toResult(&cursor, profileIndex, graph, exception);
 				if (EXCEPTION_OKAY) {
 					TRACE_RESULT(&cursor, result);
 				}
@@ -1367,11 +1431,320 @@ fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluateTrace(
 	}
 
 	const fiftyoneDegreesIpiCgResult result = ipiGraphEvaluate(
-		graphs, 
-		componentId, 
-		address, 
+		graphs,
+		componentId,
+		address,
 		&sb,
 		exception);
 	StringBuilderAddChar(&sb, '\0');
 	return result;
+}
+
+// The number of bytes that form an IP address for the graph, or 0 if the
+// graph version is invalid.
+static int getIpLengthBytes(const IpiCg* const graph) {
+	switch (getIpTypeFromGraph(&graph->info)) {
+	case IP_TYPE_IPV4: return 4;
+	case IP_TYPE_IPV6: return 16;
+	default: return 0;
+	}
+}
+
+// Writes the number of bits from the source bytes to the destination bytes
+// starting at the destination bit index. The destination must contain zeros
+// for the bits that are written.
+static void writeBits(
+	byte* const dest,
+	const int destStartBit,
+	const byte* const src,
+	const int bits) {
+	for (int i = 0; i < bits; i++) {
+		if (GET_BIT(src, i)) {
+			SET_BIT(dest, destStartBit + i);
+		}
+	}
+}
+
+// Subtracts one from the IP address bytes provided.
+static void decrementIp(byte* const ip, const int bytes) {
+	for (int i = bytes - 1; i >= 0; i--) {
+		if (ip[i] != 0) {
+			ip[i]--;
+			return;
+		}
+		ip[i] = 0xFF;
+	}
+}
+
+// Creates a cursor for the graph that is not associated with an IP address.
+// Used to fetch node spans when deriving IP addresses from a result path.
+// The string builder must remain allocated for the life time of the cursor.
+static Cursor cursorCreateForPath(
+	const IpiCg* const graph,
+	StringBuilder* const sb,
+	Exception* const exception) {
+	IpAddress ip;
+	memset(&ip, 0, sizeof(ip));
+	return cursorCreate(graph, ip, sb, exception);
+}
+
+// Zeros the bits of the IP address bytes from the start bit to the end of
+// the bytes.
+static void zeroBitsFrom(byte* const ip, const int startBit) {
+	const int startByte = startBit / 8;
+	const int offset = startBit % 8;
+	if (offset != 0) {
+		ip[startByte] &= (byte)(0xFF << (8 - offset));
+		if (startByte + 1 < VAR_SIZE) {
+			memset(ip + startByte + 1, 0, VAR_SIZE - startByte - 1);
+		}
+	}
+	else if (startByte < VAR_SIZE) {
+		memset(ip + startByte, 0, VAR_SIZE - startByte);
+	}
+}
+
+// Maximum number of leaves that can be visited when deriving the start or
+// end IP address for a result. A range is tiled by at most two leaves per
+// bit of the IP address, so this is far larger than any valid graph needs.
+#define PATH_WALK_MAX_LEAVES \
+	(FIFTYONE_DEGREES_IPI_GRAPH_PATH_NODES_MAX * 8)
+
+// State used when walking the leaves of a graph to derive the start and end
+// IP addresses of the range a result relates to. The nodes and ip members
+// always describe the path to, and the first IP address of, the leaf most
+// recently visited.
+typedef struct path_walk_t {
+	Cursor cursor; // Cursor used to fetch nodes and spans
+	fiftyoneDegreesIpiCgPathNode nodes[
+		FIFTYONE_DEGREES_IPI_GRAPH_PATH_NODES_MAX]; // Path to current leaf
+	uint16_t length; // Number of entries in nodes
+	uint16_t bitIndex; // Number of IP address bits covered by the path
+	byte ip[VAR_SIZE]; // First IP address of the current leaf
+} PathWalk;
+
+// Records the branch about to be taken at the current cursor node writing
+// the bits of the span limit followed to the walk IP address.
+static void walkAppend(PathWalk* const walk, const bool isHigh) {
+	Exception* exception = walk->cursor.ex;
+	const int length = isHigh ?
+		walk->cursor.span.lengthHigh :
+		walk->cursor.span.lengthLow;
+	if (walk->length >= FIFTYONE_DEGREES_IPI_GRAPH_PATH_NODES_MAX ||
+		walk->bitIndex + length > VAR_SIZE * 8) {
+		EXCEPTION_SET(FIFTYONE_DEGREES_STATUS_CORRUPT_DATA);
+		return;
+	}
+	fiftyoneDegreesIpiCgPathNode* const entry = &walk->nodes[walk->length++];
+	entry->nodeIndex = walk->cursor.index;
+	entry->bitIndex = walk->bitIndex;
+	entry->isHigh = isHigh ? 1 : 0;
+	writeBits(
+		walk->ip,
+		walk->bitIndex,
+		isHigh ? walk->cursor.spanHigh : walk->cursor.spanLow,
+		length);
+	walk->bitIndex = (uint16_t)(walk->bitIndex + length);
+}
+
+// Replays the path recorded in the result, positioning the walk at the leaf
+// that produced the result. The walk must have been created with a cursor
+// for the graph that produced the result.
+static void walkInit(
+	PathWalk* const walk,
+	const fiftyoneDegreesIpiCgResult* const result) {
+	Exception* exception = walk->cursor.ex;
+	walk->length = 0;
+	walk->bitIndex = 0;
+	memset(walk->ip, 0, sizeof(walk->ip));
+	for (uint16_t i = 0; i < result->pathLength; i++) {
+		cursorMove(&walk->cursor, result->pathNodes[i].nodeIndex);
+		if (EXCEPTION_FAILED) return;
+		walkAppend(walk, result->pathNodes[i].isHigh != 0);
+		if (EXCEPTION_FAILED) return;
+	}
+}
+
+// Truncates the walk to the entry at the index provided positioning the
+// cursor at the node for that entry ready for the other branch to be taken.
+static void walkTruncate(PathWalk* const walk, const uint16_t index) {
+	walk->length = index;
+	walk->bitIndex = walk->nodes[index].bitIndex;
+	zeroBitsFrom(walk->ip, walk->bitIndex);
+	cursorMove(&walk->cursor, walk->nodes[index].nodeIndex);
+}
+
+// The raw leaf value of the leaf the walk is currently positioned at. Must
+// only be used when the cursor is at a leaf.
+static uint32_t walkLeafValue(const PathWalk* const walk) {
+	return getProfileIndex(&walk->cursor);
+}
+
+// Moves the walk to the previous leaf. Returns false if there is no previous
+// leaf because the walk is at the left most leaf of the graph.
+static bool walkPrevious(PathWalk* const walk) {
+	Exception* exception = walk->cursor.ex;
+
+	// Find the deepest entry where the high span limit was followed. The
+	// previous leaf is the largest leaf under the low span limit of that
+	// node.
+	int index = walk->length - 1;
+	while (index >= 0 && walk->nodes[index].isHigh == 0) {
+		index--;
+	}
+	if (index < 0) {
+		return false;
+	}
+
+	// Follow the low span limit at the node, then the high span limits until
+	// a leaf is found.
+	walkTruncate(walk, (uint16_t)index);
+	if (EXCEPTION_FAILED) return false;
+	walkAppend(walk, false);
+	if (EXCEPTION_FAILED) return false;
+	bool found = selectLow(&walk->cursor);
+	while (found == false && EXCEPTION_OKAY) {
+		walkAppend(walk, true);
+		if (EXCEPTION_FAILED) return false;
+		found = selectHigh(&walk->cursor);
+	}
+	return EXCEPTION_OKAY;
+}
+
+// Moves the walk to the next leaf. Returns false if there is no next leaf
+// because the walk is at the right most leaf of the graph.
+static bool walkNext(PathWalk* const walk) {
+	Exception* exception = walk->cursor.ex;
+
+	// Find the deepest entry where the low span limit was followed. The next
+	// leaf is the smallest leaf under the high span limit of that node.
+	int index = walk->length - 1;
+	while (index >= 0 && walk->nodes[index].isHigh != 0) {
+		index--;
+	}
+	if (index < 0) {
+		return false;
+	}
+
+	// Follow the high span limit at the node, then the low span limits until
+	// a leaf is found.
+	walkTruncate(walk, (uint16_t)index);
+	if (EXCEPTION_FAILED) return false;
+	walkAppend(walk, true);
+	if (EXCEPTION_FAILED) return false;
+	bool found = selectHigh(&walk->cursor);
+	while (found == false && EXCEPTION_OKAY) {
+		walkAppend(walk, false);
+		if (EXCEPTION_FAILED) return false;
+		found = selectLow(&walk->cursor);
+	}
+	return EXCEPTION_OKAY;
+}
+
+// Validates the result and buffer returning the number of bytes that form an
+// IP address for the graph, or 0 if the result or buffer are not valid.
+static int validateResultAndBuffer(
+	const fiftyoneDegreesIpiCgResult* const result,
+	size_t const length) {
+	if (result->graph == NULL || result->pathLength == 0) {
+		return 0;
+	}
+	const int ipBytes = getIpLengthBytes(result->graph);
+	if (ipBytes == 0 || length < (size_t)ipBytes) {
+		return 0;
+	}
+	return ipBytes;
+}
+
+int fiftyoneDegreesIpiGraphGetStartIp(
+	const fiftyoneDegreesIpiCgResult* const result,
+	byte* const buffer,
+	size_t const length,
+	fiftyoneDegreesException* const exception) {
+	byte startIp[VAR_SIZE];
+	const int ipBytes = validateResultAndBuffer(result, length);
+	if (ipBytes == 0) {
+		return 0;
+	}
+
+	// Position the walk at the leaf that produced the result.
+	StringBuilder sb = { NULL, 0 };
+	PathWalk walk = { cursorCreateForPath(result->graph, &sb, exception) };
+	walkInit(&walk, result);
+	if (EXCEPTION_FAILED) {
+		cursorReleaseData(&walk.cursor);
+		return 0;
+	}
+
+	// A range can be covered by many leaves. Move the walk to previous
+	// leaves for as long as the leaf value is the one from the result. The
+	// first IP address of the last such leaf is the start of the range.
+	memcpy(startIp, walk.ip, sizeof(startIp));
+	int visited = 0;
+	while (visited < PATH_WALK_MAX_LEAVES &&
+		walkPrevious(&walk) &&
+		EXCEPTION_OKAY &&
+		walkLeafValue(&walk) == result->rawOffset) {
+		memcpy(startIp, walk.ip, sizeof(startIp));
+		visited++;
+	}
+	cursorReleaseData(&walk.cursor);
+	if (EXCEPTION_FAILED || visited >= PATH_WALK_MAX_LEAVES) {
+		return 0;
+	}
+
+	memcpy(buffer, startIp, ipBytes);
+	return ipBytes;
+}
+
+int fiftyoneDegreesIpiGraphGetEndIp(
+	const fiftyoneDegreesIpiCgResult* const result,
+	byte* const buffer,
+	size_t const length,
+	fiftyoneDegreesException* const exception) {
+	const int ipBytes = validateResultAndBuffer(result, length);
+	if (ipBytes == 0) {
+		return 0;
+	}
+
+	// Position the walk at the leaf that produced the result.
+	StringBuilder sb = { NULL, 0 };
+	PathWalk walk = { cursorCreateForPath(result->graph, &sb, exception) };
+	walkInit(&walk, result);
+	if (EXCEPTION_FAILED) {
+		cursorReleaseData(&walk.cursor);
+		return 0;
+	}
+
+	// A range can be covered by many leaves. Move the walk to next leaves
+	// for as long as the leaf value is the one from the result. The first IP
+	// address of the first leaf with a different value, decremented by one,
+	// is the end of the range.
+	bool moved;
+	int visited = 0;
+	while ((moved = walkNext(&walk)) &&
+		EXCEPTION_OKAY &&
+		visited < PATH_WALK_MAX_LEAVES &&
+		walkLeafValue(&walk) == result->rawOffset) {
+		visited++;
+	}
+	cursorReleaseData(&walk.cursor);
+	if (EXCEPTION_FAILED || visited >= PATH_WALK_MAX_LEAVES) {
+		return 0;
+	}
+
+	if (moved == false) {
+
+		// There is no leaf after the range so it has no upper boundary. The
+		// maximum possible IP address is the end of the range.
+		memset(buffer, 0xFF, ipBytes);
+		return ipBytes;
+	}
+
+	// The first IP address of the leaf found is the first of the next range.
+	// Subtract one to get the last IP address of the range for the result.
+	decrementIp(walk.ip, ipBytes);
+
+	memcpy(buffer, walk.ip, ipBytes);
+	return ipBytes;
 }
