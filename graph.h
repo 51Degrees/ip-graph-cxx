@@ -313,9 +313,11 @@ EXTERNAL fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluateTrace(
 /**
  * Gets the first IP address of the range that relates to the result. The IP
  * address is derived from the span limits followed on the path to the leaf
- * recorded in the result during evaluation. The bytes of the IP address are
- * written to the buffer in network byte order (4 bytes for IPv4 and 16 bytes
- * for IPv6 graphs).
+ * recorded in the result during evaluation. Where the range covers the left
+ * most leaf of the graph the minimum possible IP address is used, as all IP
+ * addresses below the first leaf evaluate to it. The bytes of the IP address
+ * are written to the buffer in network byte order (4 bytes for IPv4 and 16
+ * bytes for IPv6 graphs).
  * @param result from a prior call to fiftyoneDegreesIpiGraphEvaluate. The
  * graphs array used to create the result must not have been freed.
  * @param buffer that will be populated with the IP address bytes

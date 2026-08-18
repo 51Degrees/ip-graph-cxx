@@ -1680,10 +1680,11 @@ int fiftyoneDegreesIpiGraphGetStartIp(
 	// leaves for as long as the leaf value is the one from the result. The
 	// first IP address of the last such leaf is the start of the range.
 	memcpy(startIp, walk.ip, sizeof(startIp));
+	bool moved;
 	int visited = 0;
-	while (visited < PATH_WALK_MAX_LEAVES &&
-		walkPrevious(&walk) &&
+	while ((moved = walkPrevious(&walk)) &&
 		EXCEPTION_OKAY &&
+		visited < PATH_WALK_MAX_LEAVES &&
 		walkLeafValue(&walk) == result->rawOffset) {
 		memcpy(startIp, walk.ip, sizeof(startIp));
 		visited++;
@@ -1691,6 +1692,16 @@ int fiftyoneDegreesIpiGraphGetStartIp(
 	cursorReleaseData(&walk.cursor);
 	if (EXCEPTION_FAILED || visited >= PATH_WALK_MAX_LEAVES) {
 		return 0;
+	}
+
+	if (moved == false) {
+
+		// The left most leaf of the graph relates to the result. All IP
+		// addresses below the first IP address of that leaf also evaluate to
+		// it, so the range has no lower boundary. The minimum possible IP
+		// address is the start of the range.
+		memset(buffer, 0, ipBytes);
+		return ipBytes;
 	}
 
 	memcpy(buffer, startIp, ipBytes);
