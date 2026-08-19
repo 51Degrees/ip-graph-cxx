@@ -311,13 +311,13 @@ EXTERNAL fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluateTrace(
 	fiftyoneDegreesException* exception);
 
 /**
- * Gets the first IP address of the range that relates to the result. The IP
- * address is derived from the span limits followed on the path to the leaf
- * recorded in the result during evaluation. Where the range covers the left
- * most leaf of the graph the minimum possible IP address is used, as all IP
- * addresses below the first leaf evaluate to it. The bytes of the IP address
- * are written to the buffer in network byte order (4 bytes for IPv4 and 16
- * bytes for IPv6 graphs).
+ * Gets the first IP address of the range that relates to the result. Leaves
+ * are walked left from the leaf recorded in the result while they hold the
+ * result value, and the first IP address of the last such leaf is the start
+ * of the range. Where the range covers the left most leaf the minimum
+ * possible IP address is used, as all addresses below it evaluate to that
+ * leaf. The bytes are written to the buffer in network byte order (4 bytes
+ * for IPv4 and 16 for IPv6 graphs).
  * @param result from a prior call to fiftyoneDegreesIpiGraphEvaluate. The
  * graphs array used to create the result must not have been freed.
  * @param buffer that will be populated with the IP address bytes
@@ -334,13 +334,12 @@ EXTERNAL int fiftyoneDegreesIpiGraphGetStartIp(
 	fiftyoneDegreesException* exception);
 
 /**
- * Gets the last IP address of the range that relates to the result. The path
- * recorded in the result during evaluation is used to find the next leaf to
- * the right of the result leaf. The IP address of that leaf, decremented by
- * one, is the last IP address of the range. Where there is no leaf to the
- * right the maximum possible IP address is used. The bytes of the IP address
- * are written to the buffer in network byte order (4 bytes for IPv4 and 16
- * bytes for IPv6 graphs).
+ * Gets the last IP address of the range that relates to the result. Leaves
+ * are walked right from the leaf recorded in the result while they hold the
+ * result value, and the first IP address of the next leaf, decremented by
+ * one, is the end of the range. Where there is no next leaf the maximum
+ * possible IP address is used. The bytes are written to the buffer in
+ * network byte order (4 bytes for IPv4 and 16 for IPv6 graphs).
  * @param result from a prior call to fiftyoneDegreesIpiGraphEvaluate. The
  * graphs array used to create the result must not have been freed.
  * @param buffer that will be populated with the IP address bytes
