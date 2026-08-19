@@ -937,8 +937,8 @@ static bool cursorMoveBackLow(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	TRACE_LABEL(cursor, "cursorMoveBack");
 
-	/* Discard the path entries recorded after the previous high entry as
-	 * the low entry is now followed at that node instead. */
+	// Discard the path entries recorded after the previous high entry as
+	// the low entry is now followed at that node instead.
 	cursor->pathLength = cursor->previousHighPathLength;
 	cursor->pathBitIndex = cursor->previousHighBitIndex;
 
@@ -1133,15 +1133,15 @@ static fiftyoneDegreesIpiCgResult toResult(
 	const uint32_t profileIndex,
 	const IpiCg * const graph,
 	Exception *exception) {
-	/* The path entries after pathLength are never read, so only the entries
-	 * that form the path are copied and the rest are not initialized. */
+	// The path entries after pathLength are never read, so only the entries
+	// that form the path are copied and the rest are not initialized.
 	fiftyoneDegreesIpiCgResult result;
 	result.rawOffset = profileIndex;
 	result.offset = 0;
 	result.isGroupOffset = false;
 
-	/* Copy the path to the leaf so the start and end IP addresses can be
-	 * derived from the result. */
+	// Copy the path to the leaf so the start and end IP addresses can be
+	// derived from the result.
 	result.graph = graph;
 	result.pathLength = cursor->pathLength;
 	memcpy(
@@ -1614,8 +1614,8 @@ static uint32_t walkLeafValue(const PathWalk* const walk) {
 static bool walkPrevious(PathWalk* const walk) {
 	Exception* exception = walk->cursor.ex;
 
-	/* Find the deepest entry where the high span limit was followed. The
-	 * previous leaf is the largest under that node's low span limit. */
+	// Find the deepest entry where the high span limit was followed. The
+	// previous leaf is the largest under that node's low span limit.
 	int index = walk->length - 1;
 	while (index >= 0 && walk->nodes[index].isHigh == 0) {
 		index--;
@@ -1624,8 +1624,8 @@ static bool walkPrevious(PathWalk* const walk) {
 		return false;
 	}
 
-	/* Follow the low span limit at the node, then the high span limits
-	 * until a leaf is found. */
+	// Follow the low span limit at the node, then the high span limits
+	// until a leaf is found.
 	walkTruncate(walk, (uint16_t)index);
 	if (EXCEPTION_FAILED) return false;
 	walkAppend(walk, false);
@@ -1646,8 +1646,8 @@ static bool walkPrevious(PathWalk* const walk) {
 static bool walkNext(PathWalk* const walk) {
 	Exception* exception = walk->cursor.ex;
 
-	/* Find the deepest entry where the low span limit was followed. The
-	 * next leaf is the smallest under that node's high span limit. */
+	// Find the deepest entry where the low span limit was followed. The
+	// next leaf is the smallest under that node's high span limit.
 	int index = walk->length - 1;
 	while (index >= 0 && walk->nodes[index].isHigh != 0) {
 		index--;
@@ -1656,8 +1656,8 @@ static bool walkNext(PathWalk* const walk) {
 		return false;
 	}
 
-	/* Follow the high span limit at the node, then the low span limits
-	 * until a leaf is found. */
+	// Follow the high span limit at the node, then the low span limits
+	// until a leaf is found.
 	walkTruncate(walk, (uint16_t)index);
 	if (EXCEPTION_FAILED) return false;
 	walkAppend(walk, true);
@@ -1700,7 +1700,7 @@ int fiftyoneDegreesIpiGraphGetStartIp(
 		return 0;
 	}
 
-	/* Position the walk at the leaf that produced the result. */
+	// Position the walk at the leaf that produced the result.
 	StringBuilder sb = { NULL, 0 };
 	PathWalk walk = { cursorCreateForPath(result->graph, &sb, exception) };
 	walkInit(&walk, result);
@@ -1709,9 +1709,9 @@ int fiftyoneDegreesIpiGraphGetStartIp(
 		return 0;
 	}
 
-	/* A range can be covered by many leaves. Move to previous leaves while
-	 * the leaf value matches the result. The first IP address of the last
-	 * such leaf is the start of the range. */
+	// A range can be covered by many leaves. Move to previous leaves while
+	// the leaf value matches the result. The first IP address of the last
+	// such leaf is the start of the range.
 	memcpy(startIp, walk.ip, sizeof(startIp));
 	bool moved;
 	int visited = 0;
@@ -1729,9 +1729,9 @@ int fiftyoneDegreesIpiGraphGetStartIp(
 
 	if (moved == false) {
 
-		/* The range covers the left most leaf, and all addresses below
-		 * that leaf evaluate to it, so the range starts at the minimum
-		 * possible IP address. */
+		// The range covers the left most leaf, and all addresses below
+		// that leaf evaluate to it, so the range starts at the minimum
+		// possible IP address.
 		memset(buffer, 0, ipBytes);
 		return ipBytes;
 	}
@@ -1750,7 +1750,7 @@ int fiftyoneDegreesIpiGraphGetEndIp(
 		return 0;
 	}
 
-	/* Position the walk at the leaf that produced the result. */
+	// Position the walk at the leaf that produced the result.
 	StringBuilder sb = { NULL, 0 };
 	PathWalk walk = { cursorCreateForPath(result->graph, &sb, exception) };
 	walkInit(&walk, result);
@@ -1759,10 +1759,10 @@ int fiftyoneDegreesIpiGraphGetEndIp(
 		return 0;
 	}
 
-	/* A range can be covered by many leaves. Move to next leaves while the
-	 * leaf value matches the result. The first IP address of the first leaf
-	 * with a different value, decremented by one, is the end of the
-	 * range. */
+	// A range can be covered by many leaves. Move to next leaves while the
+	// leaf value matches the result. The first IP address of the first
+	// leaf with a different value, decremented by one, is the end of the
+	// range.
 	bool moved;
 	int visited = 0;
 	while ((moved = walkNext(&walk)) &&
@@ -1778,14 +1778,14 @@ int fiftyoneDegreesIpiGraphGetEndIp(
 
 	if (moved == false) {
 
-		/* There is no leaf after the range, so it ends at the maximum
-		 * possible IP address. */
+		// There is no leaf after the range, so it ends at the maximum
+		// possible IP address.
 		memset(buffer, 0xFF, ipBytes);
 		return ipBytes;
 	}
 
-	/* The IP address found is the first of the next range. Subtract one to
-	 * get the end of the range for the result. */
+	// The IP address found is the first of the next range. Subtract one to
+	// get the end of the range for the result.
 	decrementIp(walk.ip, ipBytes);
 
 	memcpy(buffer, walk.ip, ipBytes);
