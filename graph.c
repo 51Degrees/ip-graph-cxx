@@ -1133,7 +1133,9 @@ static fiftyoneDegreesIpiCgResult toResult(
 	const uint32_t profileIndex,
 	const IpiCg * const graph,
 	Exception *exception) {
-	fiftyoneDegreesIpiCgResult result = FIFTYONE_DEGREES_IPI_CG_RESULT_DEFAULT;
+	/* The path entries after pathLength are never read, so only the entries
+	 * that form the path are copied and the rest are not initialized. */
+	fiftyoneDegreesIpiCgResult result;
 	result.rawOffset = profileIndex;
 	result.offset = 0;
 	result.isGroupOffset = false;
@@ -1142,9 +1144,10 @@ static fiftyoneDegreesIpiCgResult toResult(
 	 * derived from the result. */
 	result.graph = graph;
 	result.pathLength = cursor->pathLength;
-	for (uint16_t i = 0; i < cursor->pathLength; i++) {
-		result.pathNodes[i] = cursor->pathNodes[i];
-	}
+	memcpy(
+		result.pathNodes,
+		cursor->pathNodes,
+		cursor->pathLength * sizeof(fiftyoneDegreesIpiCgPathNode));
 
 	if (profileIndex < graph->info.profileCount) {
 		result.offset = profileIndex + graph->info.firstProfileIndex;
