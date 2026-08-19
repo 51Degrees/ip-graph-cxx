@@ -176,14 +176,43 @@ typedef struct fiftyone_degrees_ipi_cg_t {
 } fiftyoneDegreesIpiCg;
 
 /**
+ * Maximum number of branch decisions that can be recorded for the path to a
+ * leaf. Each decision consumes at least one bit of the IP address, so the
+ * longest possible path is bounded by the number of bits in an IPv6 address.
+ */
+#define FIFTYONE_DEGREES_IPI_GRAPH_PATH_NODES_MAX 128
+
+/**
+ * A single branch decision on the path from the entry node of a graph to the
+ * leaf that produced the result. The bits of the span limit followed start at
+ * bitIndex in the IP address associated with the leaf.
+ */
+typedef struct fiftyone_degrees_ipi_cg_path_node_t {
+	uint32_t nodeIndex; /**< Index of the record in the nodes collection where
+						the decision was made */
+	uint16_t bitIndex; /**< Bit index in the IP address at which the span limit
+					   bits for the decision start */
+	byte isHigh; /**< 1 if the high span limit was followed, 0 for the low */
+} fiftyoneDegreesIpiCgPathNode;
+
+/**
  * The evaluation result from graph collection.
  */
 typedef struct fiftyone_degrees_ipi_cg_result_t {
-	uint32_t rawOffset; /**< Raw offset as returned by the graph (without 
+	uint32_t rawOffset; /**< Raw offset as returned by the graph (without
 						mapping applied) */
-	uint32_t offset; /**< Offset in profileOffset or profileGroups collection 
+	uint32_t offset; /**< Offset in profileOffset or profileGroups collection
 					 */
 	bool isGroupOffset; /**< If offset is for a profile group */
+	const fiftyoneDegreesIpiCg* graph; /**< Graph that produced the result.
+									   Must remain allocated for the path
+									   methods to be used with the result */
+	uint16_t pathLength; /**< Number of entries in pathNodes that form the
+						 path to the leaf */
+	fiftyoneDegreesIpiCgPathNode pathNodes[
+		FIFTYONE_DEGREES_IPI_GRAPH_PATH_NODES_MAX]; /**< Branch decisions that
+													lead to the leaf for the
+													result */
 } fiftyoneDegreesIpiCgResult;
 
 /**
@@ -192,7 +221,10 @@ typedef struct fiftyone_degrees_ipi_cg_result_t {
 #define FIFTYONE_DEGREES_IPI_CG_RESULT_DEFAULT (fiftyoneDegreesIpiCgResult){ \
 	UINT32_MAX, \
 	UINT32_MAX, \
-	false \
+	false, \
+	NULL, \
+	0, \
+	{ { 0, 0, 0 } } \
 }
 
 /**
@@ -276,6 +308,51 @@ EXTERNAL fiftyoneDegreesIpiCgResult fiftyoneDegreesIpiGraphEvaluateTrace(
 	fiftyoneDegreesIpAddress address,
 	char* buffer,
 	int const length,
+	fiftyoneDegreesException* exception);
+
+/**
+ * Gets the first IP address of the range that relates to the result. Leaves
+ * are walked left from the leaf recorded in the result while they hold the
+ * result value, and the first IP address of the last such leaf is the start
+ * of the range. Where the range covers the left most leaf the minimum
+ * possible IP address is used, as all addresses below it evaluate to that
+ * leaf. The bytes are written to the buffer in network byte order (4 bytes
+ * for IPv4 and 16 for IPv6 graphs).
+ * @param result from a prior call to fiftyoneDegreesIpiGraphEvaluate. The
+ * graphs array used to create the result must not have been freed.
+ * @param buffer that will be populated with the IP address bytes
+ * @param length of the buffer in bytes
+ * @param exception pointer to an exception data structure to be used if an
+ * exception occurs. See exceptions.h.
+ * @return the number of bytes written to the buffer, or 0 if the result does
+ * not contain a valid path or the buffer is too small.
+ */
+EXTERNAL int fiftyoneDegreesIpiGraphGetStartIp(
+	const fiftyoneDegreesIpiCgResult* result,
+	byte* buffer,
+	size_t const length,
+	fiftyoneDegreesException* exception);
+
+/**
+ * Gets the last IP address of the range that relates to the result. Leaves
+ * are walked right from the leaf recorded in the result while they hold the
+ * result value, and the first IP address of the next leaf, decremented by
+ * one, is the end of the range. Where there is no next leaf the maximum
+ * possible IP address is used. The bytes are written to the buffer in
+ * network byte order (4 bytes for IPv4 and 16 for IPv6 graphs).
+ * @param result from a prior call to fiftyoneDegreesIpiGraphEvaluate. The
+ * graphs array used to create the result must not have been freed.
+ * @param buffer that will be populated with the IP address bytes
+ * @param length of the buffer in bytes
+ * @param exception pointer to an exception data structure to be used if an
+ * exception occurs. See exceptions.h.
+ * @return the number of bytes written to the buffer, or 0 if the result does
+ * not contain a valid path or the buffer is too small.
+ */
+EXTERNAL int fiftyoneDegreesIpiGraphGetEndIp(
+	const fiftyoneDegreesIpiCgResult* result,
+	byte* buffer,
+	size_t const length,
 	fiftyoneDegreesException* exception);
 
 /**
