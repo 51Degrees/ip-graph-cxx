@@ -400,12 +400,31 @@ static int bitsCompare(
 // Copies bits from the source to the destination starting at the start bit in
 // the source provided and including the subsequent bits.
 static void copyBits(byte* dest, const byte* src, int startBit, int bits) {
-	for (int i = 0, s = startBit; i < bits; i++, s++) {
-
-		// If 1 then set the bit in the destination.
-		if (GET_BIT(src, s)) {
-			SET_BIT(dest, i);
+	const int sourceByte = startBit / 8;
+	const int sourceOffset = startBit % 8;
+	const int fullBytes = bits / 8;
+	const int remainingBits = bits % 8;
+	if (sourceOffset == 0) {
+		for (int i = 0; i < fullBytes; i++) {
+			dest[i] |= src[sourceByte + i];
 		}
+		if (remainingBits > 0) {
+			dest[fullBytes] |= src[sourceByte + fullBytes] &
+				(byte)(0xff << (8 - remainingBits));
+		}
+		return;
+	}
+	const int outputBytes = fullBytes + (remainingBits > 0 ? 1 : 0);
+	for (int i = 0; i < outputBytes; i++) {
+		const int bitsLeft = bits - (i * 8);
+		byte value = (byte)(src[sourceByte + i] << sourceOffset);
+		if (bitsLeft > 8 - sourceOffset) {
+			value |= src[sourceByte + i + 1] >> (8 - sourceOffset);
+		}
+		if (bitsLeft < 8) {
+			value &= (byte)(0xff << (8 - bitsLeft));
+		}
+		dest[i] |= value;
 	}
 }
 
