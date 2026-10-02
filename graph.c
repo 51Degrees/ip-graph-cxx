@@ -96,7 +96,8 @@ typedef struct cursor_t {
 				   // value array
 	uint64_t nodeBits; // The value of the current item in the graph
 	uint32_t index; // The current index in the graph values collection
-	uint32_t previousHighIndex; // The index of the last high index
+	uint32_t previousHighIndex; // The index of the last high index, or
+								// NO_PREVIOUS_HIGH if no high has been taken
 	struct ClusterWrapper {
 		uint32_t index; // The current cluster index
 		const Cluster* ptr; // typed pointer to the memory (for convenience)
@@ -126,6 +127,11 @@ typedef struct cursor_t {
 #define TRACE_LABEL(c,m)
 #define TRACE_RESULT(c,r)
 #endif
+
+// Value of Cursor.previousHighIndex before any EQUAL_HIGH has been taken. The
+// root cannot be used for this as an EQUAL_HIGH at the root also records the
+// root index.
+#define NO_PREVIOUS_HIGH UINT32_MAX
 
 // Get the bit as a bool for the byte array and bit index from the left. High
 // order bit is index 0.
@@ -837,7 +843,7 @@ static Cursor cursorCreate(
 	cursor.bitIndex = 0;
 	cursor.nodeBits = 0;
 	cursor.index = 0;
-	cursor.previousHighIndex = graph->info.graphIndex;
+	cursor.previousHighIndex = NO_PREVIOUS_HIGH;
 	cursor.cluster.index = 0;
 	cursor.cluster.ptr = NULL;
 	DataReset(&cursor.cluster.item.data);
@@ -956,11 +962,26 @@ static void selectCompleteLowHigh(Cursor* cursor) {
 	}
 }
 
+// Follows the low entries until a leaf is found.
+static void selectCompleteLowLow(Cursor* cursor) {
+	Exception* exception = cursor->ex;
+	TRACE_LABEL(cursor, "selectCompleteLowLow");
+	while (selectLow(cursor) == false) {
+		if (EXCEPTION_FAILED) return;
+	}
+}
+
 // Moves the cursor back to the prior low entry, then follows the high entries
-// until a leaf is found.
+// until a leaf is found. If no high entry has been taken then every entry so
+// far was low, the IP address is lower than the lowest key in the graph, and
+// the lowest leaf is used instead.
 static void selectCompleteLow(Cursor* cursor) {
 	Exception* exception = cursor->ex;
 	TRACE_LABEL(cursor, "selectCompleteLow");
+	if (cursor->previousHighIndex == NO_PREVIOUS_HIGH) {
+		selectCompleteLowLow(cursor);
+		return;
+	}
 	if (cursorMoveBackLow(cursor) == false) {
 		if (EXCEPTION_FAILED) return;
 		while (selectHigh(cursor) == false) {
